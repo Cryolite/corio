@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(dirname "$(readlink -e "${BASH_SOURCE[0]}")")"
+common_sh_path="$(readlink -e "$script_dir/../../bin/common.sh")"
+. "$common_sh_path"
+unset common_sh_path
+
+PROGRAM_NAME=ext/libbacktrace/configure
+
+function print_usage ()
+{
+  cat <<'EOF'
+Usage: ext/libbacktrace/configure [OPTION]... -- [CONFIGURE_OPTION]...
+Configure libbacktrace.
+
+  --source-dir=<DIR>         Path to source directory (mandatory).
+  --build-dir=<DIR>          Path to build directory (mandatory).
+  -h, --help                 Display this help and exit.
+EOF
+}
+
+if getopt -T; (( $? != 4 )); then
+  die_with_runtime_error "$PROGRAM_NAME" "\`getopt' is not an enhanced version."
+fi
+opts="$(getopt -n "$PROGRAM_NAME" -l source-dir:,build-dir:,help -- h "$@")"
+eval set -- "$opts"
+
+configure_options=()
+
+while (( $# > 0 )); do
+  arg="$1"
+  shift
+  case "$arg" in
+  --source-dir)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    source_dir="$1"
+    shift
+    ;;
+  --build-dir)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    build_dir="$1"
+    shift
+    ;;
+  -h|--help)
+    set +x
+    print_usage
+    exit 0
+    ;;
+  --)
+    configure_options+=("$@")
+    break
+    ;;
+  *)
+    die_with_user_error "$PROGRAM_NAME" "An invalid argument \`$arg'."
+    ;;
+  esac
+done
+
+if [[ ! -v source_dir ]]; then
+  die_with_user_error "$PROGRAM_NAME" "\`--source-dir' option is mandatory."
+fi
+
+if [[ ! -v build_dir ]]; then
+  die_with_user_error "$PROGRAM_NAME" "\`--build-dir' option is mandatory."
+fi
+
+if [[ -e $build_dir ]]; then
+  rm -rf "$build_dir"
+fi
+
+mkdir -p "$build_dir"
+
+(cd "$build_dir"                                                                           \
+   && "$source_dir/configure" --with-pic ${configure_options[@]+"${configure_options[@]}"}) \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to \`configure' libbacktrace."

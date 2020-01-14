@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(dirname "$(readlink -e "${BASH_SOURCE[0]}")")"
+common_sh_path="$(readlink -e "$script_dir/../../bin/common.sh")"
+. "$common_sh_path"
+unset common_sh_path
+
+PROGRAM_NAME=ext/icu4c/configure
+
+function print_usage ()
+{
+  cat <<'EOF'
+Usage: ext/icu4c/configure [OPTION]... -- [CONFIGURE_OPTION]...
+Configure ICU4C.
+
+  --source-dir=<DIR>         ICU4C source directory (mandatory).
+  --build-dir=<DIR>          ICU4C build directory (mandatory).
+  --build-type=(debug|release) Select to build whether debug or release
+                               libraries (mandatory).
+  --platform=<PLATFORM>      Select the host platform (mandatory).
+  --cppflags=<CPPFLAGS>      Path `CPPFLAGS=<CPPFLAGS>' on to ICU4C
+                             `runConfigureICU' script.
+  --cc=<CC>                  Path `CC=<CC>' on to ICU4C `runConfigureICU'
+                             script.
+  --cflags=<CFLAGS>          Path `CFLAGS=<CFLAGS>' on to ICU4C
+                             `runConfigureICU' script.
+  --cxx=<CXX>                Path `CXX=<CXX>' on to ICU4C `runConfigureICU'
+                             script.
+  --cxxflags=<CXXFLAGS>      Path `CXXFLAGS=<CXXFLAGS>' on to ICU4C
+                             `runConfigureICU' script.
+  --ldflags=<LDFLAGS>        Path `LDFLAGS=<LDFLAGS>' on to ICU4C
+                             `runConfigureICU' script.
+  -h, --help                 Display this help and exit.
+EOF
+}
+
+if getopt -T; (( $? != 4 )); then
+  die_with_runtime_error "$PROGRAM_NAME" "\`getopt' is not an enhanced version."
+fi
+opts="$(getopt -n "$PROGRAM_NAME" -l source-dir:,build-dir:,build-type:,platform:,cppflags:,cc:,cflags:,cxx:,cxxflags:,ldflags:,help -- h "$@")"
+eval set -- "$opts"
+
+while (( $# > 0 )); do
+  arg="$1"
+  shift
+  case "$arg" in
+  --source-dir)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    source_dir="$1"
+    shift
+    ;;
+  --build-dir)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    build_dir="$1"
+    shift
+    ;;
+  --build-type)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    build_type="$1"
+    shift
+    ;;
+  --platform)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    platform="$1"
+    shift
+    ;;
+  --cppflags)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    cppflags="$1"
+    shift
+    ;;
+  --cc)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    cc="$1"
+    shift
+    ;;
+  --cflags)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    cflags="$1"
+    shift
+    ;;
+  --cxx)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    cxx="$1"
+    shift
+    ;;
+  --cxxflags)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    cxxflags="$1"
+    shift
+    ;;
+  --ldflags)
+    if (( $# == 0 )); then
+      die_with_logic_error "$PROGRAM_NAME"
+    fi
+    ldflags="$1"
+    shift
+    ;;
+  -h|--help)
+    set +x
+    print_usage
+    exit 0
+    ;;
+  --)
+    rest_args+=("$@")
+    break
+    ;;
+  *)
+    die_with_user_error "$PROGRAM_NAME" "An invalid argument \`$arg'."
+    ;;
+  esac
+done
+
+temp_dir="$(mktemp -d)" \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to create a temporary directory."
+push_rollback_command "rm -rf \"$temp_dir\""
+
+if [[ ! -v source_dir ]]; then
+  die_with_user_error "$PROGRAM_NAME" "\`--source-dir' option is mandatory."
+fi
+if [[ $(readlink -m "$source_dir") != $(cd "$temp_dir" >/dev/null && readlink -m "$source_dir") ]]; then
+  die_with_user_error "$PROGRAM_NAME" "A relative path \`$source_dir' is specified for \`--source-dir' option, but is expected to be an absolute one."
+fi
+
+if [[ ! -v build_dir ]]; then
+  die_with_user_error "$PROGRAM_NAME" "\`--build-dir' option is mandatory."
+fi
+if [[ $(readlink -m "$build_dir") != $(cd "$temp_dir" >/dev/null && readlink -m "$build_dir") ]]; then
+  die_with_user_error "$PROGRAM_NAME" "A relative path \`$build_dir' is specified for \`--build-dir' option, but is expected to be an absolute one."
+fi
+
+if [[ -e $build_dir ]]; then
+  rm -rf "$build_dir"
+fi
+mkdir -p "$build_dir"
+
+if [[ ! -v build_type ]]; then
+  die_with_user_error "$PROGRAM_NAME" "\`--build-type' option is mandatory."
+fi
+case "$build_type" in
+debug)
+  configure_options+=(--enable-debug --disable-release)
+  ;;
+release)
+  ;;
+*)
+  die_with_user_error "$PROGRAM_NAME" "An invalid value \`$build_type' for \`--build-type' option."
+  ;;
+esac
+
+if [[ ! -v platform ]]; then
+  die_with_user_error "$PROGRAM_NAME" "\`--platform' option is mandatory."
+fi
+configure_options+=("$platform")
+
+configure_options+=("${rest_args[@]}")
+
+# `runConfigureICU <PLATFORM> VAR=VAL' does not work if `VAL' has a space.
+# Therefore, pass `env VAR=VAL...' on to ICU4C's configure script via
+# environment variable.
+(cd "$build_dir"
+ env                                                  \
+   ${cppflags+"CPPFLAGS=${cppflags}"}                 \
+   ${cc+"CC=${cc}"}                                   \
+   ${cflags+"CFLAGS=${cflags}"}                       \
+   ${cxx+"CXX=${cxx}"}                                \
+   ${cxxflags+"CXXFLAGS=${cxxflags}"}                 \
+   ${ldflags+"LDFLAGS=${ldflags}"}                    \
+   "$source_dir/source/runConfigureICU"               \
+   ${configure_options[@]+"${configure_options[@]}"}) \
+  || die_with_runtime_error "$PROGRAM_NAME" "Failed to execute \`runConfigureICU'."
