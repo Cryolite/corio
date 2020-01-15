@@ -124,7 +124,8 @@ add_executable(corio_test
   test/util/index_pack.cpp
   test/util/throw.cpp
   test/thread_unsafe/coroutine.cpp
-  test/thread_unsafe/mutex.cpp)
+  test/thread_unsafe/mutex.cpp
+  test/thread_unsafe/promise.cpp)
 target_link_libraries(corio_test boost_stacktrace_backtrace gtest_main)
 
 add_test(corio_test corio_test)
