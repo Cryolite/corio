@@ -294,14 +294,14 @@ private:
 
 } // namespace corio::detail_
 
-#define CORIO_ASSERT_EXPRESSION_(...)                                                         \
-::corio::detail_::expression_assertion_(                                                      \
-  (__VA_ARGS__), __FILE__, __LINE__, __func__, #__VA_ARGS__, boost::stacktrace::stacktrace()) \
+#define CORIO_ASSERT_EXPRESSION_(...)                                                           \
+::corio::detail_::expression_assertion_(                                                        \
+  (__VA_ARGS__), __FILE__, __LINE__, __func__, #__VA_ARGS__, ::boost::stacktrace::stacktrace()) \
   /**/
 
-#define CORIO_ASSERT_()                                                            \
-::corio::detail_::block_assertion_(                                                \
-  __FILE__, __LINE__, __func__, boost::stacktrace::stacktrace()) ->* [&]() -> bool \
+#define CORIO_ASSERT_()                                                              \
+::corio::detail_::block_assertion_(                                                  \
+  __FILE__, __LINE__, __func__, ::boost::stacktrace::stacktrace()) ->* [&]() -> bool \
   /**/
 
 #define CORIO_ASSERT(...) CORIO_ASSERT_ ## __VA_OPT__(EXPRESSION_) (__VA_ARGS__)
@@ -312,11 +312,8 @@ private:
 
 
 
-#include <corio/param/expression.hpp>
-#include <corio/param/function.hpp>
-#include <corio/param/line.hpp>
-#include <corio/param/file.hpp>
 #include <iostream>
+#include <ios>
 
 
 namespace corio::detail_{
@@ -330,26 +327,6 @@ public:
   dummy_expression_assertion_(dummy_expression_assertion_ const &) = delete;
 
   dummy_expression_assertion_ &operator=(dummy_expression_assertion_ const &) = delete;
-
-  dummy_expression_assertion_ const &operator<<(corio::param::file_t) const noexcept
-  {
-    return *this;
-  }
-
-  dummy_expression_assertion_ const &operator<<(corio::param::line_t) const noexcept
-  {
-    return *this;
-  }
-
-  dummy_expression_assertion_ const &operator<<(corio::param::function_t) const noexcept
-  {
-    return *this;
-  }
-
-  dummy_expression_assertion_ const &operator<<(corio::param::expression_t) const noexcept
-  {
-    return *this;
-  }
 
   template<typename T>
   dummy_expression_assertion_ const &operator<<(T const &) const noexcept
@@ -389,26 +366,6 @@ public:
     return *this;
   }
 
-  dummy_block_assertion_ const &operator<<(corio::param::file_t) const noexcept
-  {
-    return *this;
-  }
-
-  dummy_block_assertion_ const &operator<<(corio::param::line_t) const noexcept
-  {
-    return *this;
-  }
-
-  dummy_block_assertion_ const &operator<<(corio::param::function_t) const noexcept
-  {
-    return *this;
-  }
-
-  dummy_block_assertion_ const &operator<<(corio::param::expression_t) const noexcept
-  {
-    return *this;
-  }
-
   template<typename T>
   dummy_block_assertion_ const &operator<<(T const &) const noexcept
   {
@@ -437,8 +394,8 @@ public:
 ::corio::detail_::dummy_expression_assertion_{} \
   /**/
 
-#define CORIO_ASSERT_()                                    \
-::corio::detail_::dummy_block_assertion_{} ->* [&] -> void \
+#define CORIO_ASSERT_()                                      \
+::corio::detail_::dummy_block_assertion_{} ->* [&]() -> bool \
   /**/
 
 #define CORIO_ASSERT(...) CORIO_ASSERT_ ## __VA_OPT__(EXPRESSION_) (__VA_ARGS__)

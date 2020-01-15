@@ -64,10 +64,10 @@ while (( $# > 0 )); do
 done
 
 if [[ ! -v version ]]; then
-  version="$(curl -fLsS 'https://www.boost.org/users/history/'                          \
-               | grep -Eo 'Version[[:space:]]+[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+' \
-               | grep -Eo '[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+'                    \
-               | LANG=C.UTF-8 sort -Vu                                                  \
+  version="$(git ls-remote 'https://github.com/boostorg/boost.git'                    \
+               | grep -Eo 'refs/tags/boost-[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$' \
+               | grep -Eo '[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+'                  \
+               | LANG=C.UTF-8 sort -Vu                                                \
                | tail -n 1)" \
     || die_with_runtime_error "$PROGRAM_NAME" "Failed to guess Boost latest release version."
   if [[ ! $version =~ ^[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$ ]]; then

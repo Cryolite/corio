@@ -1,34 +1,32 @@
-#if !defined(CORIO_THREAD_UNSAFE_PROMISE_FWD_HPP_INCLUDE_GUARD)
-#define CORIO_THREAD_UNSAFE_PROMISE_FWD_HPP_INCLUDE_GUARD
+#if !defined(CORIO_THREAD_UNSAFE_DETAIL_COROUTINE_PROMISE_FWD_HPP_INCLUDE_GUARD)
+#define CORIO_THREAD_UNSAFE_DETAIL_COROUTINE_PROMISE_FWD_HPP_INCLUDE_GUARD
 
 #include <corio/thread_unsafe/coroutine_fwd.hpp>
 #include <corio/thread_unsafe/detail_/shared_coroutine_state_.hpp>
 #include <experimental/coroutine>
 
 
-namespace corio::thread_unsafe{
+namespace corio::thread_unsafe::detail_{
 
 template<typename R>
-class promise;
-
-namespace detail_{
+class coroutine_promise_;
 
 template<typename R>
-class promise_base_
+class coroutine_promise_base_
 {
 protected:
-  using handle_type_ = std::experimental::coroutine_handle<promise<R> >;
+  using handle_type_ = std::experimental::coroutine_handle<coroutine_promise_<R> >;
   using state_type_ = corio::thread_unsafe::detail_::shared_coroutine_state_<R>;
 
   using coroutine_type = corio::thread_unsafe::coroutine<R>;
 
-  promise_base_() noexcept;
+  coroutine_promise_base_() noexcept;
 
-  promise_base_(promise_base_ const &) = delete;
+  coroutine_promise_base_(coroutine_promise_base_ const &) = delete;
 
-  ~promise_base_();
+  ~coroutine_promise_base_();
 
-  promise_base_ &operator=(promise_base_ const &) = delete;
+  coroutine_promise_base_ &operator=(coroutine_promise_base_ const &) = delete;
 
   std::experimental::suspend_always initial_suspend();
 
@@ -38,16 +36,14 @@ protected:
 
 protected:
   state_type_ *p_;
-}; // class promise_base_
-
-} // namespace detail_
+}; // class coroutine_promise_base_
 
 template<typename R>
-class promise
-  : protected detail_::promise_base_<R>
+class coroutine_promise_
+  : private detail_::coroutine_promise_base_<R>
 {
 private:
-  using base_type_ = detail_::promise_base_<R>;
+  using base_type_ = detail_::coroutine_promise_base_<R>;
   using typename base_type_::handle_type_;
   using typename base_type_::state_type_;
   using base_type_::p_;
@@ -55,27 +51,27 @@ private:
 public:
   using typename base_type_::coroutine_type;
 
-  promise() noexcept;
+  coroutine_promise_() noexcept;
 
   coroutine_type get_return_object();
 
   using base_type_::initial_suspend;
+
+  using base_type_::unhandled_exception;
 
   void return_value(R const &value);
 
   void return_value(R &&value);
 
-  using base_type_::unhandled_exception;
-
   using base_type_::final_suspend;
-}; // class promise
+}; // class coroutine_promise_
 
 template<typename R>
-class promise<R &>
-  : protected detail_::promise_base_<R &>
+class coroutine_promise_<R &>
+  : protected detail_::coroutine_promise_base_<R &>
 {
 private:
-  using base_type_ = detail_::promise_base_<R &>;
+  using base_type_ = detail_::coroutine_promise_base_<R &>;
   using typename base_type_::handle_type_;
   using typename base_type_::state_type_;
   using base_type_::p_;
@@ -83,25 +79,25 @@ private:
 public:
   using typename base_type_::coroutine_type;
 
-  promise() noexcept;
+  coroutine_promise_() noexcept;
 
   coroutine_type get_return_object();
 
   using base_type_::initial_suspend;
+
+  using base_type_::unhandled_exception;
 
   void return_value(R &value);
 
-  using base_type_::unhandled_exception;
-
   using base_type_::final_suspend;
-}; // class promise<R &>
+}; // class coroutine_promise_<R &>
 
 template<>
-class promise<void>
-  : protected detail_::promise_base_<void>
+class coroutine_promise_<void>
+  : protected detail_::coroutine_promise_base_<void>
 {
 private:
-  using base_type_ = detail_::promise_base_<void>;
+  using base_type_ = detail_::coroutine_promise_base_<void>;
   using typename base_type_::handle_type_;
   using typename base_type_::state_type_;
   using base_type_::p_;
@@ -109,19 +105,19 @@ private:
 public:
   using typename base_type_::coroutine_type;
 
-  promise() noexcept;
+  coroutine_promise_() noexcept;
 
   coroutine_type get_return_object();
 
   using base_type_::initial_suspend;
 
-  void return_void();
-
   using base_type_::unhandled_exception;
 
+  void return_void();
+
   using base_type_::final_suspend;
-}; // class promise<void>
+}; // class coroutine_promise_<void>
 
-} // namespace corio
+} // namespace corio::thread_unsafe::detail_
 
-#endif // !defined(CORIO_CORE_PROMISE_FWD_HPP_INCLUDE_GUARD)
+#endif // !defined(CORIO_THREAD_UNSAFE_DETAIL_COROUTINE_PROMISE_FWD_HPP_INCLUDE_GUARD)

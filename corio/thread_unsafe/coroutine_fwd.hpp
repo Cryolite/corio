@@ -7,16 +7,16 @@
 
 namespace corio::thread_unsafe{
 
-template<typename R>
-class promise;
-
 namespace detail_{
+
+template<typename R>
+class coroutine_promise_;
 
 template<typename R>
 class coroutine_base_
 {
 public:
-  using promise_type = promise<R>;
+  using promise_type = coroutine_promise_<R>;
 
 protected:
   using handle_type_ = std::experimental::coroutine_handle<promise_type>;
@@ -38,7 +38,9 @@ protected:
 
   coroutine_base_ &operator=(coroutine_base_ &&rhs) noexcept;
 
-  void operator()();
+  bool valid() const noexcept;
+
+  void resume();
 
   bool done() const;
 
@@ -63,7 +65,7 @@ private:
   using typename base_type_::handle_type_;
   using typename base_type_::state_type_;
 
-  friend class promise<R>;
+  friend class detail_::coroutine_promise_<R>;
 
   coroutine(handle_type_ &&handle, state_type_ *p) noexcept;
 
@@ -73,7 +75,9 @@ public:
     lhs.swap(rhs);
   }
 
-  using base_type_::operator();
+  using base_type_::valid;
+
+  using base_type_::resume;
 
   using base_type_::done;
 }; // class coroutine
@@ -92,7 +96,7 @@ private:
   using typename base_type_::handle_type_;
   using typename base_type_::state_type_;
 
-  friend class promise<R &>;
+  friend class detail_::coroutine_promise_<R &>;
 
   coroutine(handle_type_ &&handle, state_type_ *p) noexcept;
 
@@ -102,7 +106,9 @@ public:
     lhs.swap(rhs);
   }
 
-  using base_type_::operator();
+  using base_type_::valid;
+
+  using base_type_::resume;
 
   using base_type_::done;
 }; // class coroutine<R &>
@@ -121,7 +127,7 @@ private:
   using typename base_type_::handle_type_;
   using typename base_type_::state_type_;
 
-  friend class promise<void>;
+  friend class detail_::coroutine_promise_<void>;
 
   coroutine(handle_type_ &&handle, state_type_ *p) noexcept;
 
@@ -131,7 +137,9 @@ public:
     lhs.swap(rhs);
   }
 
-  using base_type_::operator();
+  using base_type_::valid;
+
+  using base_type_::resume;
 
   using base_type_::done;
 }; // class coroutine<void>

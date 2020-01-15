@@ -25,10 +25,7 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     add_compile_options(-fcoroutines-ts)
-    set(CMAKE_SHARED_LINKER_FLAGS
-      "${CMAKE_SHARED_LINKER_FLAGS} -fcoroutines-ts")
-    set(CMAKE_EXE_LINKER_FLAGS
-      "${CMAKE_EXE_LINKER_FLAGS} -fcoroutines-ts")
+    add_link_options(-fcoroutines-ts)
   else()
     message(FATAL_ERROR
       "An unsupported C++ compiler: CMAKE_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}.")
@@ -38,6 +35,9 @@ else()
     "An unsupported system: CMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME}.")
 endif()
 
+if(NOT DEFINED CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Debug")
+endif()
 message(STATUS
   "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 
@@ -101,10 +101,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   if((CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
       OR (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"))
     add_compile_options(-pthread)
-    set(CMAKE_SHARED_LINKER_FLAGS
-      "${CMAKE_SHARED_LINKER_FLAGS} -pthread")
-    set(CMAKE_EXE_LINKER_FLAGS
-      "${CMAKE_EXE_LINKER_FLAGS} -pthread")
+    add_link_options(-pthread)
   else()
     message(FATAL_ERROR
       "An unsupported C++ compiler: CMAKE_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}.")
@@ -126,9 +123,8 @@ add_executable(corio_test
   test/util/scope_guard.cpp
   test/util/index_pack.cpp
   test/util/throw.cpp
-  test/test.cpp
+  test/thread_unsafe/coroutine.cpp
   test/thread_unsafe/mutex.cpp)
-
 target_link_libraries(corio_test boost_stacktrace_backtrace gtest_main)
 
 add_test(corio_test corio_test)

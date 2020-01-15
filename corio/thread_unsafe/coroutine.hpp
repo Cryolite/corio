@@ -58,7 +58,14 @@ auto coroutine_base_<R>::operator=(coroutine_base_ &&rhs) noexcept -> coroutine_
 }
 
 template<typename R>
-void coroutine_base_<R>::operator()()
+bool coroutine_base_<R>::valid() const noexcept
+{
+  CORIO_ASSERT((handle_ == nullptr) == (p_ == nullptr));
+  return handle_ == nullptr;
+}
+
+template<typename R>
+void coroutine_base_<R>::resume()
 {
   CORIO_ASSERT(handle_ != nullptr);
   CORIO_ASSERT(p_ != nullptr);
@@ -90,5 +97,8 @@ coroutine<void>::coroutine(handle_type_ &&handle, state_type_ *p) noexcept
 {}
 
 } // namespace corio::thread_unsafe
+
+
+#include <corio/thread_unsafe/detail_/coroutine_promise_.hpp>
 
 #endif // !defined(CORIO_THREAD_UNSAFE_COROUTINE_HPP_INCLUDE_GUARD)

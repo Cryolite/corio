@@ -32,11 +32,13 @@ public:
 
   [[nodiscard]] std::size_t decrement_reference_count() noexcept
   {
+    CORIO_ASSERT(reference_count_ > 0u);
     return --reference_count_;
   }
 
   void set_value(R const &value)
   {
+    CORIO_ASSERT(reference_count_ > 0u);
     CORIO_ASSERT(!value_.has_value());
     CORIO_ASSERT(p_exception_ == nullptr);
     value_.emplace(value);
@@ -44,6 +46,7 @@ public:
 
   void set_value(R &&value)
   {
+    CORIO_ASSERT(reference_count_ > 0u);
     CORIO_ASSERT(!value_.has_value());
     CORIO_ASSERT(p_exception_ == nullptr);
     value_.emplace(std::move(value));
@@ -51,6 +54,7 @@ public:
 
   void set_exception(std::exception_ptr p_exception)
   {
+    CORIO_ASSERT(reference_count_ > 0u);
     CORIO_ASSERT(!value_.has_value());
     CORIO_ASSERT(p_exception_ == nullptr);
     p_exception_ = p_exception;
@@ -58,7 +62,8 @@ public:
 
   R get()
   {
-    CORIO_ASSERT(value_.has_value() || p_exception_ != nullptr);
+    CORIO_ASSERT(reference_count_ > 0u);
+    CORIO_ASSERT(value_.has_value() != (p_exception_ != nullptr));
     if (p_exception_ != nullptr) {
       CORIO_SCOPE_GUARD{
         p_exception_ = nullptr;
@@ -98,11 +103,13 @@ public:
 
   [[nodiscard]] std::size_t decrement_reference_count() noexcept
   {
+    CORIO_ASSERT(reference_count_ > 0u);
     return --reference_count_;
   }
 
   void set_value(R &value)
   {
+    CORIO_ASSERT(reference_count_ > 0u);
     CORIO_ASSERT(p_ == nullptr);
     CORIO_ASSERT(p_exception_ == nullptr);
     p_ = &value;
@@ -110,6 +117,7 @@ public:
 
   void set_exception(std::exception_ptr p_exception)
   {
+    CORIO_ASSERT(reference_count_ > 0u);
     CORIO_ASSERT(p_ == nullptr);
     CORIO_ASSERT(p_exception_ == nullptr);
     p_exception_ = p_exception;
@@ -117,7 +125,8 @@ public:
 
   R &get()
   {
-    CORIO_ASSERT(p_ != nullptr || p_exception_ != nullptr);
+    CORIO_ASSERT(reference_count_ > 0u);
+    CORIO_ASSERT((p_ != nullptr) != (p_exception_ != nullptr));
     if (p_exception_ != nullptr) {
       CORIO_SCOPE_GUARD{
         p_exception_ = nullptr;
@@ -156,17 +165,20 @@ public:
 
   [[nodiscard]] std::size_t decrement_reference_count() noexcept
   {
+    CORIO_ASSERT(reference_count_ > 0u);
     return --reference_count_;
   }
 
   void set_exception(std::exception_ptr p_exception)
   {
+    CORIO_ASSERT(reference_count_ > 0u);
     CORIO_ASSERT(p_exception_ == nullptr);
     p_exception_ = p_exception;
   }
 
   void get()
   {
+    CORIO_ASSERT(reference_count_ > 0u);
     if (p_exception_ != nullptr) {
       CORIO_SCOPE_GUARD{
         p_exception_ = nullptr;
