@@ -37,6 +37,7 @@ coroutine_base_<R>::coroutine_base_(coroutine_base_ &&rhs) noexcept
 template<typename R>
 coroutine_base_<R>::~coroutine_base_()
 {
+  handle_.destroy();
   if (p_ != nullptr && p_->decrement_reference_count() == 0u) {
     delete p_;
   }
