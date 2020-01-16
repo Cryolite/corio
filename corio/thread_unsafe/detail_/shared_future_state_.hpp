@@ -2,13 +2,10 @@
 #define CORIO_THREAD_UNSAFE_DETAIL_SHARED_FUTURE_STATE_HPP_INCLUDE_GUARD
 
 #include <corio/thread_unsafe/mutex.hpp>
-#include <corio/util/exception_or.hpp>
 #include <corio/util/assert.hpp>
 #include <boost/asio/async_result.hpp>
 #include <type_traits>
 #include <variant>
-#include <optional>
-#include <tuple>
 #include <utility>
 #include <exception>
 #include <cstddef>
@@ -16,29 +13,126 @@
 
 namespace corio::thread_unsafe::detail_{
 
-template<typename R>
+template<typename R, typename ExecutionContext>
 class shared_future_state_
 {
+public:
+  using context_type = ExecutionContext;
+  using result_type = std::variant<R, std::exception_ptr>;
+
 private:
-  using value_type_ = std::tuple<std::optional<R>, std::exception_ptr, corio::thread_unsafe::mutex, std::size_t>;
-  static constexpr std::size_t value_ = 0u;
-  static constexpr std::size_t exception_ = 1u;
-  static constexpr std::size_t mutex_ = 2u;
-  static constexpr std::size_t refcount_ = 3u;
+  class impl_
+  {
+  private:
+    using mutex_type_ = corio::thread_unsafe::basic_mutex<context_type>;
+
+  public:
+    explicit impl_(context_type &ctx) noexcept
+      : value_(std::in_place_index<1u>, nullptr),
+        mutex_(ctx),
+        refcount_(1u)
+    {
+      mutex_.try_lock();
+    }
+
+    impl_(impl_ const &) = delete;
+
+    impl_ &operator=(impl_ const &) = delete;
+
+    void notify_reference_copy() noexcept
+    {
+      ++refcount_;
+    }
+
+    std::size_t release_reference() noexcept
+    {
+      CORIO_ASSERT(refcount_ > 0u);
+      return --refcount_;
+    }
+
+    bool ready() const noexcept
+    {
+      CORIO_ASSERT(refcount_ > 0u);
+      auto visitor = [](auto &v) noexcept -> bool{
+        using type = std::decay_t<std::remove_reference_t<decltype(v)> >;
+        if constexpr (std::is_same_v<type, std::exception_ptr>) {
+          return v == nullptr;
+        }
+        else {
+          static_assert(std::is_same_v<type, R>);
+          return false;
+        }
+      };
+      return !(value_.index() == 1u && std::visit(std::move(visitor), value_));
+    }
+
+    void set_value(R const &value)
+    {
+      CORIO_ASSERT(!ready());
+      CORIO_ASSERT(!mutex_.try_lock());
+      value_.template emplace<0u>(value);
+      mutex_.unlock();
+    }
+
+    void set_value(R &&value)
+    {
+      CORIO_ASSERT(!ready());
+      CORIO_ASSERT(!mutex_.try_lock());
+      value_.template emplace<0u>(std::move(value));
+      mutex_.unlock();
+    }
+
+    void set_exception(std::exception_ptr p)
+    {
+      CORIO_ASSERT(!ready());
+      CORIO_ASSERT(!mutex_.try_lock());
+      value_.template emplace<1u>(std::move(p));
+      mutex_.unlock();
+    }
+
+    template<typename CompletionToken>
+    auto async_get(CompletionToken &&token)
+    {
+      CORIO_ASSERT(ready());
+      using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(result_type)>;
+      using completion_handler_type = typename async_result_type::completion_handler_type;
+      completion_handler_type completion_handler(std::move(token));
+      async_result_type async_result(completion_handler);
+      mutex_.async_lock(
+        [h = std::move(completion_handler), &value = value_]() -> void{
+          std::move(h)(std::move(value));
+        });
+      return async_result.get();
+    }
+
+    template<typename CompletionToken>
+    auto async_wait(CompletionToken &&token)
+    {
+      CORIO_ASSERT(ready());
+      using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void()>;
+      using completion_handler_type = typename async_result_type::completion_handler_type;
+      completion_handler_type completion_handler(std::move(token));
+      async_result_type async_result(completion_handler);
+      mutex_.async_lock(std::move(completion_handler));
+      return async_result.get();
+  }
+
+  private:
+    result_type value_;
+    mutex_type_ mutex_;
+    std::size_t refcount_;
+  }; // class impl_
 
 public:
-  shared_future_state_()
-    : p_(new value_type_())
-  {
-    ++std::get<refcount_>(*p_);
-    std::get<mutex_>(*p_).try_lock();
-  }
+  explicit shared_future_state_(context_type &ctx)
+    : p_(new impl_(ctx))
+  {}
 
   shared_future_state_(shared_future_state_ const &rhs) noexcept
     : p_(rhs.p_)
   {
     if (p_ != nullptr) {
-      ++std::get<refcount_>(*p_);
+      p_->notify_reference_copy();
     }
   }
 
@@ -50,8 +144,7 @@ public:
 
   ~shared_future_state_() noexcept
   {
-    CORIO_ASSERT(p_ == nullptr || std::get<refcount_>(*p_) > 0u);
-    if (p_ != nullptr && --std::get<refcount_>(*p_) == 0u) {
+    if (p_ != nullptr && p_->release_reference() == 0u) {
       delete p_;
     }
   }
@@ -81,78 +174,43 @@ public:
 
   bool valid() const noexcept
   {
-    CORIO_ASSERT(p_ == nullptr || std::get<refcount_>(*p_) > 0u);
     return p_ != nullptr;
   }
 
   bool ready() const noexcept
   {
-    if (p_ == nullptr) {
-      return false;
-    }
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-    CORIO_ASSERT(!std::get<value_>(*p_).has_value() || std::get<exception_>(*p_) == nullptr);
-    return std::get<value_>(*p_).has_value() || std::get<exception_>(*p_) != nullptr;
+    return p_ != nullptr && p_->ready();
   }
 
   void set_value(R const &value)
   {
     CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-    CORIO_ASSERT(!std::get<value_>(*p_).has_value());
-    CORIO_ASSERT(std::get<exception_>(*p_) == nullptr);
-    std::get_<value_>(*p_).emplace(value);
-    std::get<mutex_>(*p_).unlock();
+    p_->set_value(value);
   }
 
   void set_value(R &&value)
   {
     CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-    CORIO_ASSERT(!std::get<value_>(*p_).has_value());
-    CORIO_ASSERT(std::get<exception_>(*p_) == nullptr);
-    std::get_<value_>(*p_).emplace(std::move(value));
-    std::get<mutex_>(*p_).unlock();
+    p_->set_value(std::move(value));
   }
 
   void set_exception(std::exception_ptr p)
   {
     CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-    CORIO_ASSERT(!std::get<value_>(*p_).has_value());
-    CORIO_ASSERT(std::get<exception_>(*p_) == nullptr);
-    std::get<exception_>(*p_) = std::move(p);
-    std::get<mutex_>(*p_).unlock();
+    p_->set_exception(std::move(p));
   }
 
   template<typename CompletionToken>
   auto async_get(CompletionToken &&token)
   {
     CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-
-    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(corio::exception_or<R>)>;
+    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(result_type)>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type completion_handler(std::move(token));
     async_result_type async_result(completion_handler);
-
-    std::get<mutex_>(*p_).async_lock(
-      [state = *this, completion_handler_ = std::move(completion_handler)]() -> void{
-        CORIO_ASSERT(state.p_ != nullptr);
-        CORIO_ASSERT(std::get<refcount_>(*state.p_) > 0u);
-        CORIO_ASSERT(std::get<value_>(*state.p_).has_value() != (std::get<exception_>(*state.p_) != nullptr));
-        CORIO_ASSERT(!std::get<mutex_>(*state.p_).try_lock());
-        std::get<mutex_>(*state.p_).unlock();
-        std::exception_ptr p_exception = std::get<exception_>(*state.p_);
-        if (p_exception != nullptr) {
-          auto result = corio::exception_or<R>::make_exception(std::move(p_exception));
-          std::move(completion_handler_)(std::move(result));
-        }
-        else {
-          R &value = std::get<value_>(*state.p_).value();
-          auto result = corio::exception_or<R>::make_value(std::move(value));
-          std::move(completion_handler_)(std::move(result));
-        }
+    p_->async_get(
+      [self = *this, h = std::move(completion_handler)]() -> void{
+        std::move(h)();
       });
     return async_result.get();
   }
@@ -161,72 +219,44 @@ public:
   auto async_wait(CompletionToken &&token)
   {
     CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-
     using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void()>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type completion_handler(std::move(token));
     async_result_type async_result(completion_handler);
-
-    std::get<mutex_>(*p_).async_lock(
-      [state = *this, completion_handler_ = std::move(completion_handler)]() -> void{
-        CORIO_ASSERT(state.p_ != nullptr);
-        CORIO_ASSERT(std::get<refcount_>(*state.p_) > 0u);
-        CORIO_ASSERT(std::get<value_>(*state.p_).has_value() != (std::get<exception_>(*state.p_) != nullptr));
-        CORIO_ASSERT(!std::get<mutex_>(*state.p_).try_lock());
-        std::get<mutex_>(*state.p_).unlock();
-        std::move(completion_handler_)();
+    p_->async_wait(
+      [self = *this, h = std::move(completion_handler)]() -> void{
+        std::move(h)();
       });
     return async_result.get();
   }
 
 private:
-  value_type_ *p_;
+  impl_ *p_;
 }; // class shared_future_state_
 
-template<typename R>
-class shared_future_state_<R &>
+template<typename R, typename ExecutionContext>
+class shared_future_state_<R &, ExecutionContext>
+  : private shared_future_state_<R *, ExecutionContext>
 {
 private:
-  using value_type_ = std::tuple<std::variant<R *, std::exception_ptr>, corio::thread_unsafe::mutex, std::size_t>;
-  static constexpr std::size_t value_ = 0u;
-  static constexpr std::size_t mutex_ = 1u;
-  static constexpr std::size_t refcount_ = 2u;
+  using base_type_ = shared_future_state_<R *, ExecutionContext>;
 
 public:
-  shared_future_state_()
-    : p_(new value_type_())
-  {
-    ++std::get<refcount_>(*p_);
-    std::get<mutex_>(*p_).try_lock();
-  }
+  using context_type = ExecutionContext;
+  using result_type = std::variant<R &, std::exception_ptr>;
 
-  shared_future_state_(shared_future_state_ const &rhs) noexcept
-    : p_(rhs.p_)
-  {
-    if (p_ != nullptr) {
-      ++std::get<refcount_>(*p_);
-    }
-  }
+  explicit shared_future_state_(context_type ctx)
+    : base_type_(ctx)
+  {}
 
-  shared_future_state_(shared_future_state_ &&rhs) noexcept
-    : p_(rhs.p_)
-  {
-    rhs.p_ = nullptr;
-  }
+  shared_future_state_(shared_future_state_ const &rhs) = default;
 
-  ~shared_future_state_() noexcept
-  {
-    CORIO_ASSERT(p_ == nullptr || std::get<refcount_>(*p_) > 0u);
-    if (p_ != nullptr && --std::get<refcount_>(*p_) == 0u) {
-      delete p_;
-    }
-  }
+  shared_future_state_(shared_future_state_ &&rhs) = default;
 
   void swap(shared_future_state_ &rhs) noexcept
   {
     using std::swap;
-    swap(p_, rhs.p_);
+    swap(static_cast<base_type_ &>(rhs));
   }
 
   friend void swap(shared_future_state_ &lhs, shared_future_state_ &rhs) noexcept
@@ -246,72 +276,31 @@ public:
     return *this;
   }
 
-  bool valid() const noexcept
-  {
-    CORIO_ASSERT(p_ == nullptr || std::get<refcount_>(*p_) > 0u);
-    return p_ != nullptr;
-  }
+  using base_type_::valid;
 
-  bool ready() const noexcept
-  {
-    if (p_ == nullptr) {
-      return false;
-    }
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-    auto visitor = [](auto &v) -> bool{
-      return v != nullptr;
-    };
-    return std::visit(std::move(visitor), std::get<value_>(*p_));
-  }
+  using base_type_::ready;
 
   void set_value(R &value)
   {
-    CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-    CORIO_ASSERT(!ready());
-    std::get<value_>(*p_).emplace<R *>(&value);
-    std::get<mutex_>(*p_).unlock();
+    base_type_::set_value(&value);
   }
 
   void set_exception(std::exception_ptr p)
   {
-    CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-    CORIO_ASSERT(!ready());
-    std::get<value_>(*p_).emplace<std::exception_ptr>(std::move(p));
-    std::get<mutex_>(*p_).unlock();
+    base_type_::set_exception(std::move(p));
   }
 
   template<typename CompletionToken>
   auto async_get(CompletionToken &&token)
   {
-    CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-
-    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(corio::exception_or<R &>)>;
+    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(result_type)>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type completion_handler(std::move(token));
     async_result_type async_result(completion_handler);
-
-    std::get<mutex_>(*p_).async_lock(
-      [state = *this, completion_handler_ = std::move(completion_handler)]() -> void{
-        CORIO_ASSERT(state.p_ != nullptr);
-        CORIO_ASSERT(std::get<refcount_>(*state.p_) > 0u);
-        CORIO_ASSERT(!std::get<mutex_>(*state.p_).try_lock());
-        std::get<mutex_>(*state.p_).unlock();
-        auto visitor = [h = std::move(completion_handler_)](auto v) -> void{
-          using type = std::decay_t<std::remove_reference_t<decltype(v)> >;
-          if constexpr (std::is_same_v<type, R *>) {
-            auto result = corio::exception_or<R &>::make_value(*v);
-            std::move(h)(std::move(result));
-          }
-          else {
-            static_assert(std::is_same_v<type, std::exception_ptr>);
-            auto result = corio::exception_or<R &>::make_exception(std::move(v));
-            std::move(h)(std::move(result));
-          }
-        };
-        std::visit(std::move(visitor), std::move(std::get<value_>(*state.p_)));
+    base_type_::async_get(
+      [h = std::move(completion_handler)](R *p) -> void{
+        CORIO_ASSERT(p != nullptr);
+        std::move(h)(*p);
       });
     return async_result.get();
   }
@@ -319,51 +308,122 @@ public:
   template<typename CompletionToken>
   auto async_wait(CompletionToken &&token)
   {
-    CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-
-    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void()>;
-    using completion_handler_type = typename async_result_type::completion_handler_type;
-    completion_handler_type completion_handler(std::move(token));
-    async_result_type async_result(completion_handler);
-
-    std::get<mutex_>(*p_).async_lock(
-      [state = *this, completion_handler_ = std::move(completion_handler)]() -> void{
-        CORIO_ASSERT(state.p_ != nullptr);
-        CORIO_ASSERT(std::get<refcount_>(*state.p_) > 0u);
-        CORIO_ASSERT(!std::get<mutex_>(*state.p_).try_lock());
-        std::get<mutex_>(*state.p_).unlock();
-        std::move(completion_handler_)();
-      });
-    return async_result.get();
+    return base_type_::async_wait(std::move(token));
   }
-
-private:
-  value_type_ *p_;
 }; // class shared_future_state_<R &>
 
-template<>
-class shared_future_state_<void>
+template<class ExecutionContext>
+class shared_future_state_<void, ExecutionContext>
 {
+public:
+  using context_type = ExecutionContext;
+  using result_type = std::variant<std::monostate, std::exception_ptr>;
+
 private:
-  using value_type_ = std::tuple<std::exception_ptr, corio::thread_unsafe::mutex, std::size_t>;
-  static constexpr std::size_t exception_ = 0u;
-  static constexpr std::size_t mutex_ = 1u;
-  static constexpr std::size_t refcount_ = 2u;
+  class impl_
+  {
+  private:
+    using mutex_type_ = corio::thread_unsafe::basic_mutex<context_type>;
+
+  public:
+    explicit impl_(context_type &ctx)
+      : value_(std::in_place_index<1u>, nullptr),
+        mutex_(ctx),
+        refcount_(1u)
+    {
+      mutex_.try_lock();
+    }
+
+    impl_(impl_ const &) = delete;
+
+    impl_ &operator=(impl_ &) = delete;
+
+    void notify_reference_copy() noexcept
+    {
+      ++refcount_;
+    }
+
+    std::size_t release_reference() noexcept
+    {
+      CORIO_ASSERT(refcount_ > 0u);
+      return --refcount_;
+    }
+
+    bool ready() const noexcept
+    {
+      CORIO_ASSERT(refcount_ > 0u);
+      auto visitor = [](auto &v) noexcept -> bool{
+        using type = std::decay_t<std::remove_reference_t<decltype(v)> >;
+        if constexpr (std::is_same_v<type, std::exception_ptr>) {
+          return v == nullptr;
+        }
+        else {
+          static_assert(std::is_same_v<type, std::monostate>);
+          return false;
+        }
+      };
+      return !(value_.index() == 1u && std::visit(std::move(visitor), value_));
+    }
+
+    void set_value()
+    {
+      CORIO_ASSERT(!ready());
+      CORIO_ASSERT(!mutex_.try_lock());
+      value_.emplace<0u>();
+      mutex_.unlock();
+    }
+
+    void set_exception(std::exception_ptr p)
+    {
+      CORIO_ASSERT(!ready());
+      CORIO_ASSERT(!mutex_.try_lock());
+      value_.emplace<1u>(std::move(p));
+      mutex_.unlock();
+    }
+
+    template<typename CompletionToken>
+    auto async_get(CompletionToken &&token)
+    {
+      CORIO_ASSERT(ready());
+      using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(result_type)>;
+      using completion_handler_type = typename async_result_type::completion_handler_type;
+      completion_handler_type completion_handler(std::move(token));
+      async_result_type async_result(completion_handler);
+      mutex_.async_lock(
+        [h = std::move(completion_handler), &value = value_]() -> void{
+          std::move(h)(std::move(value));
+        });
+      return async_result.get();
+    }
+
+    template<typename CompletionToken>
+    auto async_wait(CompletionToken &&token)
+    {
+      CORIO_ASSERT(ready());
+      using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(result_type)>;
+      using completion_handler_type = typename async_result_type::completion_handler_type;
+      completion_handler_type completion_handler(std::move(token));
+      async_result_type async_result(completion_handler);
+      mutex_.async_lock(std::move(completion_handler));
+      return async_result.get();
+    }
+
+  private:
+    result_type value_;
+    mutex_type_ mutex_;
+    std::size_t refcount_;
+  }; // class impl_
 
 public:
-  shared_future_state_()
-    : p_(new value_type_())
-  {
-    ++std::get<refcount_>(*p_);
-    std::get<mutex_>(*p_).try_lock();
-  }
+  explicit shared_future_state_(context_type &ctx)
+    : p_(new impl_(ctx))
+  {}
 
   shared_future_state_(shared_future_state_ const &rhs) noexcept
     : p_(rhs.p_)
   {
     if (p_ != nullptr) {
-      ++std::get<refcount_>(*p_);
+      p_->notify_reference_copy();
     }
   }
 
@@ -375,8 +435,7 @@ public:
 
   ~shared_future_state_() noexcept
   {
-    CORIO_ASSERT(p_ == nullptr || std::get<refcount_>(*p_) > 0u);
-    if (p_ != nullptr && --std::get<refcount_>(*p_) == 0u) {
+    if (p_ != nullptr && p_->release_reference() == 0u) {
       delete p_;
     }
   }
@@ -406,66 +465,37 @@ public:
 
   bool valid() const noexcept
   {
-    CORIO_ASSERT(p_ == nullptr || std::get<refcount_>(*p_) > 0u);
     return p_ != nullptr;
   }
 
   bool ready() const noexcept
   {
-    if (p_ == nullptr) {
-      return false;
-    }
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-    bool result = std::get<mutex_>(*p_).try_lock();
-    if (result) {
-      std::get<mutex_>(*p_).unlock();
-    }
-    return result;
+    return p_ != nullptr && p_->ready();
   }
 
   void set_value()
   {
     CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-    CORIO_ASSERT(!ready());
-    std::get<mutex_>(*p_).unlock();
+    p_->set_value();
   }
 
   void set_exception(std::exception_ptr p)
   {
     CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-    CORIO_ASSERT(!ready());
-    std::get<exception_>(*p_) = std::move(p);
-    std::get<mutex_>(*p_).unlock();
+    p_->set_exception(std::move(p));
   }
 
   template<typename CompletionToken>
   auto async_get(CompletionToken &&token)
   {
     CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-
-    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(corio::exception_or<void>)>;
+    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(std::exception_ptr)>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type completion_handler(std::move(token));
     async_result_type async_result(completion_handler);
-
-    std::get<mutex_>(*p_).async_lock(
-      [state = *this, completion_handler_ = std::move(completion_handler)]() -> void{
-        CORIO_ASSERT(state.p_ != nullptr);
-        CORIO_ASSERT(std::get<refcount_>(*state.p_) > 0u);
-        CORIO_ASSERT(!std::get<mutex_>(*state.p_).try_lock());
-        std::get<mutex_>(*state.p_).unlock();
-        if (std::get<exception_>(*state.p_) == nullptr) {
-          auto result = corio::exceptoin_or<void>::make_value();
-          std::move(completion_handler_)(std::move(result));
-        }
-        else {
-          std::exception_ptr p = std::get<exception_>(*state.p_);
-          auto result = corio::exception_or<void>::make_exception(std::move(p));
-          std::move(completion_handler_)(std::move(result));
-        }
+    p_->async_get(
+      [self = *this, h = std::move(completion_handler)]() -> void{
+        std::move(h)();
       });
     return async_result.get();
   }
@@ -474,26 +504,19 @@ public:
   auto async_wait(CompletionToken &&token)
   {
     CORIO_ASSERT(p_ != nullptr);
-    CORIO_ASSERT(std::get<refcount_>(*p_) > 0u);
-
     using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void()>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type completion_handler(std::move(token));
     async_result_type async_result(completion_handler);
-
-    std::get<mutex_>(*p_).async_lock(
-      [state = *this, completion_handler_ = std::move(completion_handler)]() -> void{
-        CORIO_ASSERT(state.p_ != nullptr);
-        CORIO_ASSERT(std::get<refcount_>(*state.p_) > 0u);
-        CORIO_ASSERT(!std::get<mutex_>(*state.p_).try_lock());
-        std::get<mutex_>(*state.p_).unlock();
-        std::move(completion_handler_)();
+    p_->async_wait(
+      [self = *this, h = std::move(completion_handler)]() -> void{
+        std::move(h)();
       });
     return async_result.get();
   }
 
 private:
-  value_type_ *p_;
+  impl_ *p_;
 }; // class shared_future_state_<void>
 
 } // namespace corio::thread_unsafe::detail_

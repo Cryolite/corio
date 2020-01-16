@@ -11,7 +11,8 @@ TEST(mutex, construct)
 {
   using context_type = boost::asio::io_context;
   context_type ctx;
-  corio::mutex<context_type> mtx(ctx);
+  using mutex = corio::basic_mutex<context_type>;
+  mutex mtx(ctx);
 
   boost::asio::io_context::count_type count = ctx.poll();
   EXPECT_EQ(count, 0u);
@@ -22,7 +23,8 @@ TEST(mutex, lock_unlock)
 {
   using context_type = boost::asio::io_context;
   context_type ctx;
-  corio::mutex<context_type> mtx(ctx);
+  using mutex = corio::basic_mutex<context_type>;
+  mutex mtx(ctx);
 
   int i = 0;
 
@@ -49,7 +51,8 @@ TEST(mutex, lock_after_lock)
 {
   using context_type = boost::asio::io_context;
   context_type ctx;
-  corio::mutex<context_type> mtx(ctx);
+  using mutex = corio::basic_mutex<context_type>;
+  mutex mtx(ctx);
 
   int i = 0;
 
@@ -103,8 +106,9 @@ TEST(mutex, two_objects)
 {
   using context_type = boost::asio::io_context;
   context_type ctx;
-  corio::mutex<context_type> mtxi(ctx);
-  corio::mutex<context_type> mtxj(ctx);
+  using mutex = corio::basic_mutex<context_type>;
+  mutex mtxi(ctx);
+  mutex mtxj(ctx);
 
   int i = 0;
   int j = 0;
@@ -150,7 +154,8 @@ TEST(mutex, try_lock)
 {
   using context_type = boost::asio::io_context;
   context_type ctx;
-  corio::mutex<context_type> mtx(ctx);
+  using mutex = corio::basic_mutex<context_type>;
+  mutex mtx(ctx);
 
   EXPECT_TRUE(mtx.try_lock());
 

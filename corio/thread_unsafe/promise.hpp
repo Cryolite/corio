@@ -1,7 +1,7 @@
 #if !defined(CORIO_THREAD_UNSAFE_PROMISE_HPP_INCLUDE_GUARD)
 #define CORIO_THREAD_UNSAFE_PROMISE_HPP_INCLUDE_GUARD
 
-//#include <corio/thread_unsafe/future.hpp>
+#include <corio/thread_unsafe/future.hpp>
 #include <corio/thread_unsafe/detail_/shared_future_state_.hpp>
 #include <corio/util/throw.hpp>
 #include <boost/asio/execution_context.hpp>
@@ -15,7 +15,7 @@ namespace corio::thread_unsafe{
 
 namespace detail_{
 
-template<typename R, typename ExecutionContext = void>
+template<typename R, typename ExecutionContext>
 class promise_base_
 {
 protected:
@@ -27,18 +27,16 @@ protected:
   static_assert(std::is_convertible_v<context_type &, boost::asio::execution_context &>);
 
 private:
-  using state_type_ = corio::thread_unsafe::detail_::shared_future_state_<R>;
+  using state_type_ = corio::thread_unsafe::detail_::shared_future_state_<R, context_type>;
 
 protected:
   promise_base_()
     : state_(),
-      p_ctx_(),
       future_already_retrieved_()
   {}
 
   explicit promise_base_(context_type &ctx)
-    : state_(),
-      p_ctx_(&ctx),
+    : state_(ctx),
       future_already_retrieved_()
   {}
 
@@ -46,10 +44,8 @@ protected:
 
   promise_base_(promise_base_ &&rhs) noexcept
     : state_(std::move(rhs.state_)),
-      p_ctx_(rhs.p_ctx_)
       future_already_retrieved_(rhs.future_already_retrieved_)
   {
-    rhs.p_ctx_ = nullptr;
     rhs.future_already_retrieved_ = false;
   }
 
@@ -65,7 +61,6 @@ protected:
   {
     using std::swap;
     swap(state_, rhs.state_);
-    swap(p_ctx_, rhs.p_ctx_);
     swap(future_already_retrieved_, rhs.future_already_retrieved_);
   }
 
@@ -77,15 +72,7 @@ protected:
     return *this;
   }
 
-  context_type *context() noexcept
-  {
-    if (!state_.valid()) {
-      CORIO_THROW<std::future_error>(std::future_errc::no_state);
-    }
-    return p_ctx_;
-  }
-
-  corio::thread_unsafe::future<R, context_type> get_future()
+  corio::thread_unsafe::basic_future<R, context_type> get_future()
   {
     if (future_already_retrieved_) {
       CORIO_THROW<std::future_error>(std::future_errc::future_already_retrieved);
@@ -93,7 +80,7 @@ protected:
     if (!state_.valid()) {
       CORIO_THROW<std::future_error>(std::future_errc::no_state);
     }
-    corio::thread_unsafe::future<R, context_type> future(state_, p_ctx_);
+    corio::thread_unsafe::basic_future<R, context_type> future(state_);
     future_already_retrieved_ = true;
     return future;
   }
@@ -106,7 +93,7 @@ protected:
     if (!state_.valid()) {
       CORIO_THROW<std::future_error>(std::future_errc::no_state);
     }
-    state_.set_exception_(std::move(p), p_ctx_);
+    state_.set_exception(std::move(p));
   }
 
 protected:
@@ -117,25 +104,29 @@ protected:
 } // namespace detail_
 
 template<typename R, typename ExecutionContext>
-class promise
-  : protected detail_::promise_base_<R, ExecutionContext>
+class basic_promise
+  : private detail_::promise_base_<R, ExecutionContext>
 {
 private:
-  using base_type_ = promise_base_<R>;
+  using base_type_ = detail_::promise_base_<R, ExecutionContext>;
+  using base_type_::state_;
 
 public:
   using typename base_type_::context_type;
 
-  promise()
-    : base_type_()
+  explicit basic_promise(context_type &ctx)
+    : base_type_(ctx)
   {}
 
-  friend void swap(promise &lhs, promise &rhs)
+  void swap(basic_promise &rhs) noexcept
+  {
+    base_type_::swap(rhs);
+  }
+
+  friend void swap(basic_promise &lhs, basic_promise &rhs) noexcept
   {
     lhs.swap(rhs);
   }
-
-  using base_type_::context;
 
   using base_type_::get_future;
 
@@ -147,7 +138,7 @@ public:
     if (!state_.valid()) {
       CORIO_THROW<std::future_error>(std::future_errc::no_state);
     }
-    state_.set_value(value, p_ctx_);
+    state_.set_value(value);
   }
 
   void set_value(R &&value)
@@ -158,32 +149,36 @@ public:
     if (!state_.valid()) {
       CORIO_THROW<std::future_error>(std::future_errc::no_state);
     }
-    state_.set_value(std::move(value), p_ctx_);
+    state_.set_value(std::move(value));
   }
 
   using base_type_::set_exception;
-}; // class promise
+}; // class basic_promise
 
 template<typename R, typename ExecutionContext>
-class promise
-  : protected detail_::promise_base_<R &, ExecutionContext>
+class basic_promise<R &, ExecutionContext>
+  : private detail_::promise_base_<R &, ExecutionContext>
 {
 private:
-  using base_type_ = promise_base_<R &>;
+  using base_type_ = detail_::promise_base_<R &, ExecutionContext>;
+  using base_type_::state_;
 
 public:
   using typename base_type_::context_type;
 
-  promise()
-    : base_type_()
+  explicit basic_promise(context_type &ctx)
+    : base_type_(ctx)
   {}
 
-  friend void swap(promise &lhs, promise &rhs)
+  void swap(basic_promise &rhs) noexcept
+  {
+    base_type_::swap(rhs);
+  }
+
+  friend void swap(basic_promise &lhs, basic_promise &rhs)
   {
     lhs.swap(rhs);
   }
-
-  using base_type_::context;
 
   using base_type_::get_future;
 
@@ -195,32 +190,36 @@ public:
     if (!state_.valid()) {
       CORIO_THROW<std::future_error>(std::future_errc::no_state);
     }
-    state_.set_value(value, p_ctx_);
+    state_.set_value(value);
   }
 
   using base_type_::set_exception;
-}; // class promise<R &, ExecutionContext>
+}; // class basic_promise<R &, ExecutionContext>
 
 template<typename ExecutionContext>
-class promise
-  : protected detail_::promise_base_<void, ExecutionContext>
+class basic_promise<void, ExecutionContext>
+  : private detail_::promise_base_<void, ExecutionContext>
 {
 private:
-  using base_type_ = promise_base_<void>;
+  using base_type_ = detail_::promise_base_<void, ExecutionContext>;
+  using base_type_::state_;
 
 public:
   using typename base_type_::context_type;
 
-  promise()
-    : base_type_()
+  explicit basic_promise(context_type &ctx)
+    : base_type_(ctx)
   {}
 
-  friend void swap(promise &lhs, promise &rhs)
+  void swap(basic_promise &rhs) noexcept
+  {
+    base_type_::swap(rhs);
+  }
+
+  friend void swap(basic_promise &lhs, basic_promise &rhs) noexcept
   {
     lhs.swap(rhs);
   }
-
-  using base_type_::context;
 
   using base_type_::get_future;
 
@@ -232,11 +231,11 @@ public:
     if (!state_.valid()) {
       CORIO_THROW<std::future_error>(std::future_errc::no_state);
     }
-    state_.set_value(p_ctx_);
+    state_.set_value();
   }
 
   using base_type_::set_exception;
-}; // class promise<void, ExecutionContext>
+}; // class basic_promise<void, ExecutionContext>
 
 } // namespace corio::thread_unsafe
 
