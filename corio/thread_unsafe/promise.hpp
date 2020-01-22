@@ -3,14 +3,14 @@
 
 #include <corio/thread_unsafe/future.hpp>
 #include <corio/thread_unsafe/detail_/shared_future_state_.hpp>
+#include <corio/core/enable_if_executor.hpp>
+#include <corio/core/is_executor.hpp>
 #include <corio/core/enable_if_execution_context.hpp>
 #include <corio/core/error.hpp>
 #include <corio/util/throw.hpp>
 #include <boost/asio/executor.hpp>
 #include <boost/config.hpp>
 #include <type_traits>
-#include <functional>
-#include <variant>
 #include <utility>
 #include <exception>
 
@@ -32,11 +32,7 @@ protected:
   static_assert(corio::is_executor_v<executor_type>);
 
 private:
-  using value_impl_type_ = std::conditional_t<
-    std::is_lvalue_reference_v<R>,
-    std::reference_wrapper<std::remove_reference_t<R> >,
-    std::conditional_t<std::is_void_v<R>, std::monostate, R> >;
-  using state_type_ = corio::thread_unsafe::detail_::shared_future_state_<value_impl_type_, executor_type>;
+  using state_type_ = corio::thread_unsafe::detail_::shared_future_state_<R, executor_type>;
 
 protected:
   using future_type = corio::thread_unsafe::basic_future<R, executor_type>;
@@ -62,7 +58,7 @@ protected:
 
   ~promise_mixin_()
   {
-    if (future_already_retrieved_ && !state_.ready()) {
+    if (future_already_retrieved_ && has_executor() && !state_.ready()) {
       std::exception_ptr p = std::make_exception_ptr(corio::broken_promise_error());
       state_.set_exception(std::move(p));
     }
@@ -93,10 +89,7 @@ protected:
 
   void set_executor(executor_type const &executor)
   {
-    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
-    }
-    state_.set_executor(executor);
+    set_executor(executor_type(executor));
   }
 
   void set_executor(executor_type &&executor)
@@ -281,7 +274,7 @@ public:
     if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
       CORIO_THROW<corio::no_future_state_error>();
     }
-    state_.set_value(std::ref(value));
+    state_.set_value(value);
   }
 
   using mixin_type_::set_exception;
@@ -346,7 +339,7 @@ public:
     if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
       CORIO_THROW<corio::no_future_state_error>();
     }
-    state_.set_value(std::monostate());
+    state_.set_value();
   }
 
   using mixin_type_::set_exception;

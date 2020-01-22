@@ -65,7 +65,10 @@ private:
   private:
     virtual void adopt_lock(void *p) noexcept override final
     {
-      CORIO_ASSERT(lock_.mutex() != nullptr);
+      // The only callers, `mutex_type_::async_lock` and `mutex_type_::unlock`,
+      // guarantee that the dynamic type of the object pointed to by `p` is
+      // `mutex_type_`.
+      CORIO_ASSERT(lock_.mutex() == nullptr);
       CORIO_ASSERT(p != nullptr);
       mutex_type_ &mutex = *static_cast<mutex_type_ *>(p);
       lock_ = lock_type_(mutex, std::adopt_lock);
@@ -74,6 +77,7 @@ private:
     virtual void operator()() override final
     {
       CORIO_ASSERT(lock_.mutex() != nullptr);
+      CORIO_ASSERT(lock_.owns_lock());
       std::move(f_)(std::move(lock_));
     }
 
@@ -172,14 +176,14 @@ public:
 
   void set_executor(executor_type const &executor)
   {
-    if (BOOST_UNLIKELY(executor_.has_value())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::executor_already_assigned_error>();
-    }
-    executor_.emplace(executor);
+    set_executor(executor_type(executor));
   }
 
   void set_executor(executor_type &&executor)
   {
+    if (BOOST_UNLIKELY(executor_.has_value())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::executor_already_assigned_error>();
+    }
     executor_.emplace(std::move(executor));
   }
 
@@ -197,8 +201,7 @@ public:
     if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
       CORIO_THROW<corio::no_executor_error>();
     }
-    using async_result_type = boost::asio::async_result<
-      std::decay_t<CompletionToken>, void(lock_type)>;
+    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(lock_type)>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type completion_handler(std::forward<CompletionToken>(token));
     async_result_type async_result(completion_handler);
@@ -207,15 +210,13 @@ public:
       CORIO_EXCEPTION_GUARD(eg){
         locked_ = false;
       };
-      detail_::mutex_completion_handler_ h(
-        std::move(completion_handler), std::type_identity<executor_type>());
+      detail_::mutex_completion_handler_ h(std::move(completion_handler), std::type_identity<executor_type>());
       h.adopt_lock(this);
       eg.dismiss();
       boost::asio::defer(executor_.value(), std::move(h));
     }
     else {
-      detail_::mutex_completion_handler_ h(
-        std::move(completion_handler), std::type_identity<executor_type>());
+      detail_::mutex_completion_handler_ h(std::move(completion_handler), std::type_identity<executor_type>());
       handler_queue_.emplace_back(std::move(h));
     }
     return async_result.get();
@@ -239,12 +240,13 @@ public:
         locked_ = false;
       };
       detail_::mutex_completion_handler_ h = std::move(handler_queue_.front());
-      CORIO_EXCEPTION_GUARD(){
-        handler_queue_.emplace_front(std::move(h));
-      };
       handler_queue_.pop_front();
       h.adopt_lock(this);
       eg.dismiss();
+      // Pray to God that the following line does not throw an exception.
+      // Otherwise, because `h` already owns the lock, `basic_mutex::unlock` is
+      // called again from the `h`'s destructor during stack unwinding, which
+      // may in turn evaluates the following line again...
       boost::asio::post(executor_.value(), std::move(h));
     }
   }

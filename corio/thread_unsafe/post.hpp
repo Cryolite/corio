@@ -7,45 +7,10 @@
 #include <corio/core/error.hpp>
 #include <corio/util/throw.hpp>
 #include <boost/asio/post.hpp>
-#include <type_traits>
+#include <utility>
 
 
 namespace corio::thread_unsafe{
-
-namespace detail_{
-
-template<typename T>
-class coroutine_iteration_handler_;
-
-template<typename R, typename Executor>
-class coroutine_iteration_handler_<corio::thread_unsafe::basic_coroutine<R, Executor> >
-{
-public:
-  using coroutine_type = corio::thread_unsafe::basic_coroutine<R, Executor>;
-
-  explicit coroutine_iteration_handler_(coroutine_type &&coro)
-    : coro_(std::move(coro))
-  {}
-
-  coroutine_iteration_handler_(coroutine_iteration_handler_ const &) = delete;
-
-  coroutine_iteration_handler_(coroutine_iteration_handler_ &&rhs) = default;
-
-  coroutine_iteration_handler_ &operator=(coroutine_iteration_handler_ const &) = delete;
-
-  void operator()()
-  {
-    if (!coro_.done()) {
-      coro_.resume();
-      boost::asio::post(coro_.get_executor(), std::move(*this));
-    }
-  }
-
-private:
-  coroutine_type coro_;
-}; // class coroutine_iteration_handler_<corio::thread_unsafe::basic_coroutine<R, Executor> >
-
-} // namespace detail_
 
 template<typename Executor0, typename R, typename Executor1>
 void post(
@@ -62,10 +27,10 @@ void post(
   else {
     coro.set_executor(executor);
   }
-  using coroutine_type = corio::thread_unsafe::basic_coroutine<R, Executor1>;
-  using handler_type = detail_::coroutine_iteration_handler_<coroutine_type>;
-  handler_type h(std::move(coro));
-  boost::asio::post(executor, std::move(h));
+  boost::asio::post(
+    [coro_ = std::move(coro)]() mutable -> void {
+      coro_.resume();
+    });
 }
 
 template<typename ExecutionContext, typename R, typename Executor>

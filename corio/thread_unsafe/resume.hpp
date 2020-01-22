@@ -1,7 +1,7 @@
 #if !defined(CORIO_THREAD_UNSAFE_RESUME_HPP_INCLUDE_GUARD)
 #define CORIO_THREAD_UNSAFE_RESUME_HPP_INCLUDE_GUARD
 
-#include <corio/thread_unsafe/resume.hpp>
+#include <corio/thread_unsafe/resume_fwd.hpp>
 #include <corio/thread_unsafe/promise.hpp>
 #include <corio/util/remove_rvalue_reference.hpp>
 #include <boost/asio/async_result.hpp>

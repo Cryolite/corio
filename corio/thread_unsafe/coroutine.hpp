@@ -1,5 +1,5 @@
-#if !defined(CORIO_THREAD_UNSAFE_COROUTINE_FWD_HPP_INCLUDE_GUARD)
-#define CORIO_THREAD_UNSAFE_COROUTINE_FWD_HPP_INCLUDE_GUARD
+#if !defined(CORIO_THREAD_UNSAFE_COROUTINE_HPP_INCLUDE_GUARD)
+#define CORIO_THREAD_UNSAFE_COROUTINE_HPP_INCLUDE_GUARD
 
 #include <corio/thread_unsafe/future.hpp>
 #include <corio/core/is_executor.hpp>
@@ -27,18 +27,19 @@ public:
 
 private:
   using handle_type_ = std::experimental::coroutine_handle<promise_type>;
-  using future_type_ = corio::thread_unsafe::basic_future<R, executor_type>;
 
+public:
+  using future_type = corio::thread_unsafe::basic_future<R, executor_type>;
+
+private:
   friend class basic_coroutine_promise<R, executor_type>;
 
-  basic_coroutine(handle_type_ &&handle, future_type_ &&future) noexcept
+  basic_coroutine(handle_type_ &&handle, future_type &&future) noexcept
     : handle_(std::move(handle)),
       future_(std::move(future))
   {}
 
 public:
-  using async_get_argument_type = typename future_type_::async_get_argument_type;
-
   basic_coroutine() = default;
 
   basic_coroutine(basic_coroutine const &) = delete;
@@ -87,10 +88,7 @@ public:
 
   void set_executor(executor_type const &executor)
   {
-    if (BOOST_UNLIKELY(!future_.valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
-    }
-    future_.set_executor(executor);
+    set_executor(executor_type(executor));
   }
 
   void set_executor(executor_type &&executor)
@@ -111,7 +109,7 @@ public:
 
   bool valid() const noexcept
   {
-    CORIO_ASSERT((handle_ != nullptr) == (future_.valid()));
+    CORIO_ASSERT((handle_ != nullptr) == future_.valid());
     return handle_ != nullptr;
   }
 
@@ -134,21 +132,14 @@ public:
     return handle_.done();
   }
 
-  template<typename CompletionToken>
-  auto async_get(CompletionToken &&token)
+  future_type get_future() &&
   {
-    return future_.async_get(std::move(token));
-  }
-
-  template<typename CompletionToken>
-  auto async_wait(CompletionToken &&token)
-  {
-    return future_.async_wait(std::move(token));
+    return std::move(future_);
   }
 
 private:
   handle_type_ handle_;
-  future_type_ future_;
+  future_type future_;
 }; // class basic_coroutine
 
 template<typename R>
@@ -158,4 +149,4 @@ using coroutine = basic_coroutine<R, boost::asio::executor>;
 
 #include <corio/thread_unsafe/coroutine_promise.hpp>
 
-#endif // !defined(CORIO_THREAD_UNSAFE_COROUTINE_FWD_HPP_INCLUDE_GUARD)
+#endif // !defined(CORIO_THREAD_UNSAFE_COROUTINE_HPP_INCLUDE_GUARD)

@@ -3,10 +3,9 @@
 
 #include <corio/thread_unsafe/mutex.hpp>
 #include <corio/core/is_executor.hpp>
-#include <corio/core/enable_if_execution_context.hpp>
+#include <corio/util/expected.hpp>
 #include <corio/util/assert.hpp>
 #include <type_traits>
-#include <variant>
 #include <utility>
 #include <exception>
 #include <cstddef>
@@ -25,7 +24,6 @@ private:
 public:
   using executor_type = Executor;
   static_assert(corio::is_executor_v<executor_type>);
-  using async_get_argument_type = std::variant<R, std::exception_ptr>;
 
 private:
   class impl_
@@ -37,7 +35,7 @@ private:
   public:
     impl_()
       : mtx_(),
-        value_(std::in_place_index<1u>, nullptr),
+        value_(),
         refcount_(0u)
     {
       mtx_.try_lock();
@@ -45,7 +43,7 @@ private:
 
     explicit impl_(executor_type &&executor)
       : mtx_(std::move(executor)),
-        value_(std::in_place_index<1u>, nullptr),
+        value_(),
         refcount_(0u)
     {
       mtx_.try_lock();
@@ -72,12 +70,6 @@ private:
       return mtx_.has_executor();
     }
 
-    void set_executor(executor_type const &executor)
-    {
-      CORIO_ASSERT(refcount_ > 0u);
-      mtx_.set_executor(executor);
-    }
-
     void set_executor(executor_type &&executor)
     {
       CORIO_ASSERT(refcount_ > 0u);
@@ -93,23 +85,15 @@ private:
     bool ready() const noexcept
     {
       CORIO_ASSERT(refcount_ > 0u);
-      std::exception_ptr const *p = std::get_if<1u>(&std::as_const(value_));
-      return p == nullptr || *p != nullptr;
+      return !!value_;
     }
 
-    void set_value(R const &value)
+    template<typename... Args>
+    void set_value(Args &&... args)
     {
       CORIO_ASSERT(!ready());
       CORIO_ASSERT(!mtx_.try_lock());
-      value_.template emplace<0u>(value);
-      mtx_.unlock();
-    }
-
-    void set_value(R &&value)
-    {
-      CORIO_ASSERT(!ready());
-      CORIO_ASSERT(!mtx_.try_lock());
-      value_.template emplace<0u>(std::move(value));
+      value_.emplace(std::forward<Args>(args)...);
       mtx_.unlock();
     }
 
@@ -117,7 +101,7 @@ private:
     {
       CORIO_ASSERT(!ready());
       CORIO_ASSERT(!mtx_.try_lock());
-      value_.template emplace<1u>(std::move(p));
+      value_.set_exception(std::move(p));
       mtx_.unlock();
     }
 
@@ -125,8 +109,13 @@ private:
     void async_get(CompletionHandler &&h)
     {
       CORIO_ASSERT(refcount_ > 0u);
+      // The only caller of this function, `shared_future_state_::async_get`,
+      // guarantees that `h` has ownership of the object pointed by `this`.
+      // Thus, use of a reference to the member variable `value_` is safe as
+      // long as `h_` (a moved-to destination of `h`, to which ownership of the
+      // object pointed by `this` is transferred) lives.
       mtx_.async_lock(
-        [h_ = std::move(h), &value = value_](lock_type_ lock) -> void{
+        [h_ = std::move(h), &value = value_](lock_type_ lock) mutable -> void{
           lock = lock_type_();
           std::move(h_)(std::move(value));
         });
@@ -137,15 +126,21 @@ private:
     {
       CORIO_ASSERT(refcount_ > 0u);
       mtx_.async_lock(
-        [h_ = std::move(h)](lock_type_ lock) -> void{
+        [h_ = std::move(h)](lock_type_ lock) mutable -> void{
           lock = lock_type_();
           std::move(h_)();
         });
     }
 
+    R get()
+    {
+      CORIO_ASSERT(refcount_ > 0u);
+      return corio::get(value_);
+    }
+
   private:
     mutex_type_ mtx_;
-    async_get_argument_type value_;
+    expected<R> value_;
     std::size_t refcount_;
   }; // class impl_
 
@@ -156,7 +151,7 @@ public:
     p_->acquire();
   }
 
-  shared_future_state_(std::nullptr_t) noexcept
+  explicit shared_future_state_(std::nullptr_t) noexcept
     : p_()
   {}
 
@@ -216,12 +211,6 @@ public:
     return p_->has_executor();
   }
 
-  void set_executor(executor_type const &executor)
-  {
-    CORIO_ASSERT(p_ != nullptr);
-    p_->set_executor(executor);
-  }
-
   void set_executor(executor_type &&executor)
   {
     CORIO_ASSERT(p_ != nullptr);
@@ -244,16 +233,11 @@ public:
     return p_ != nullptr && p_->ready();
   }
 
-  void set_value(R const &value)
+  template<typename... Args>
+  void set_value(Args &&... args)
   {
     CORIO_ASSERT(p_ != nullptr);
-    p_->set_value(value);
-  }
-
-  void set_value(R &&value)
-  {
-    CORIO_ASSERT(p_ != nullptr);
-    p_->set_value(std::move(value));
+    p_->set_value(std::forward<Args>(args)...);
   }
 
   void set_exception(std::exception_ptr p)
@@ -266,9 +250,13 @@ public:
   void async_get(CompletionHandler &&h)
   {
     CORIO_ASSERT(p_ != nullptr);
+    // Intentional copy of `*this` to the lambda capture increments the
+    // reference count of the object referred to by `p_`. This guarantees that
+    // the object referred to by `p_` lives as long as the closure object
+    // lives.
     p_->async_get(
-      [self = *this, h_ = std::move(h)](async_get_argument_type r) -> void{
-        std::move(h_)(std::move(r));
+      [self = *this, h_ = std::move(h)](corio::expected<R> value) mutable -> void{
+        std::move(h_)(std::move(value));
       });
   }
 
@@ -277,9 +265,15 @@ public:
   {
     CORIO_ASSERT(p_ != nullptr);
     p_->async_wait(
-      [self = *this, h_ = std::move(h)](async_get_argument_type) -> void{
+      [self = *this, h_ = std::move(h)]() mutable -> void{
         std::move(h_)();
       });
+  }
+
+  R get()
+  {
+    CORIO_ASSERT(p_ != nullptr);
+    return p_->get();
   }
 
 private:

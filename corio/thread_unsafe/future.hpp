@@ -1,21 +1,18 @@
 #if !defined(CORIO_THREAD_UNSAFE_FUTURE_HPP_INCLUDE_GUARD)
 #define CORIO_THREAD_UNSAFE_FUTURE_HPP_INCLUDE_GUARD
 
-#include <corio/core/get.hpp>
-
-#include <corio/thread_unsafe/resume_fwd.hpp>
 #include <corio/thread_unsafe/detail_/shared_future_state_.hpp>
+#include <corio/core/is_executor.hpp>
 #include <corio/core/error.hpp>
+#include <corio/util/expected.hpp>
 #include <corio/util/throw.hpp>
+#include <corio/util/assert.hpp>
 #include <boost/asio/async_result.hpp>
 #include <boost/asio/executor.hpp>
 #include <boost/config.hpp>
 #include <type_traits>
-#include <functional>
-#include <variant>
 #include <utility>
 #include <experimental/coroutine>
-#include <exception>
 
 
 namespace corio::thread_unsafe{
@@ -34,7 +31,6 @@ protected:
   static_assert(!std::is_rvalue_reference_v<R>);
   using executor_type = Executor;
   static_assert(corio::is_executor_v<executor_type>);
-  using async_get_argument_type = std::variant<R, std::exception_ptr>;
   using state_type_ = corio::thread_unsafe::detail_::shared_future_state_<R, executor_type>;
 
   explicit future_mixin_(state_type_ const &state) noexcept
@@ -75,10 +71,7 @@ protected:
 
   void set_executor(executor_type const &executor)
   {
-    if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
-    }
-    state_.set_executor(executor);
+    set_executor(executor_type(executor));
   }
 
   void set_executor(executor_type &&executor)
@@ -108,8 +101,7 @@ protected:
     if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
       CORIO_THROW<corio::no_future_state_error>();
     }
-    using async_result_type = boost::asio::async_result<
-      std::decay_t<CompletionToken>, void(async_get_argument_type)>;
+    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void()>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type h(std::forward<CompletionToken>(token));
     async_result_type result(h);
@@ -122,9 +114,11 @@ protected:
     return false;
   }
 
-  template<typename CoroutinePromise>
-  void await_suspend(std::experimental::coroutine_handle<CoroutinePromise>) const noexcept
-  {}
+  bool await_suspend(std::experimental::coroutine_handle<> h)
+  {
+    async_wait([h_ = std::move(h)]() mutable -> void { h_.resume(); });
+    return true;
+  }
 
 protected:
   state_type_ state_;
@@ -152,8 +146,6 @@ private:
   {}
 
 public:
-  using typename mixin_type_::async_get_argument_type;
-
   basic_future() = default;
 
   void swap(basic_future &rhs) noexcept
@@ -180,8 +172,7 @@ public:
     if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
       CORIO_THROW<corio::no_future_state_error>();
     }
-    using async_result_type = boost::asio::async_result<
-      std::decay_t<CompletionToken>, void(async_get_argument_type)>;
+    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(corio::expected<R>)>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type h(std::forward<CompletionToken>(token));
     async_result_type result(h);
@@ -198,25 +189,20 @@ public:
   R await_resume()
   {
     CORIO_ASSERT(state_.ready());
-    async_get_argument_type result(std::in_place_index<1u>, nullptr);
-    async_get(
-      [&result](async_get_argument_type value) -> void{
-        result = std::move(value);
-      });
-    return corio::get(result);
+    return state_.get();
   }
 }; // basic_future
 
 template<typename R, typename Executor>
 class basic_future<R &, Executor>
-  : private detail_::future_mixin_<std::reference_wrapper<R>, Executor>
+  : private detail_::future_mixin_<R &, Executor>
 {
 public:
   using executor_type = Executor;
   static_assert(corio::is_executor_v<executor_type>);
 
 private:
-  using mixin_type_ = detail_::future_mixin_<std::reference_wrapper<R>, executor_type>;
+  using mixin_type_ = detail_::future_mixin_<R &, executor_type>;
   using typename mixin_type_::state_type_;
   using mixin_type_::state_;
 
@@ -227,8 +213,6 @@ private:
   {}
 
 public:
-  using typename mixin_type_::async_get_argument_type;
-
   basic_future() = default;
 
   void swap(basic_future &rhs) noexcept
@@ -255,8 +239,7 @@ public:
     if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
       CORIO_THROW<corio::no_future_state_error>();
     }
-    using async_result_type = boost::asio::async_result<
-      std::decay_t<CompletionToken>, void(async_get_argument_type)>;
+    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(corio::expected<R &>)>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type h(std::forward<CompletionToken>(token));
     async_result_type result(h);
@@ -270,22 +253,23 @@ public:
 
   using mixin_type_::await_suspend;
 
-  auto await_resume()
+  R &await_resume()
   {
-    return async_get(corio::thread_unsafe::resume);
+    CORIO_ASSERT(state_.ready());
+    return state_.get();
   }
 }; // basic_future<R &, Executor>
 
 template<typename Executor>
 class basic_future<void, Executor>
-  : private detail_::future_mixin_<std::monostate, Executor>
+  : private detail_::future_mixin_<void, Executor>
 {
 public:
   using executor_type = Executor;
   static_assert(corio::is_executor_v<executor_type>);
 
 private:
-  using mixin_type_ = detail_::future_mixin_<std::monostate, executor_type>;
+  using mixin_type_ = detail_::future_mixin_<void, executor_type>;
   using typename mixin_type_::state_type_;
   using mixin_type_::state_;
 
@@ -296,8 +280,6 @@ private:
   {}
 
 public:
-  using typename mixin_type_::async_get_argument_type;
-
   basic_future() = default;
 
   void swap(basic_future &rhs) noexcept
@@ -324,8 +306,7 @@ public:
     if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
       CORIO_THROW<corio::no_future_state_error>();
     }
-    using async_result_type = boost::asio::async_result<
-      std::decay_t<CompletionToken>, void(async_get_argument_type)>;
+    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(corio::expected<void>)>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type h(std::forward<CompletionToken>(token));
     async_result_type result(h);
@@ -339,11 +320,12 @@ public:
 
   using mixin_type_::await_suspend;
 
-  auto await_resume()
+  void await_resume()
   {
-    return async_get(corio::thread_unsafe::resume);
+    CORIO_ASSERT(state_.ready());
+    state_.get();
   }
-}; // basic_future<R &, Executor>
+}; // basic_future<void, Executor>
 
 template<typename R>
 using future = basic_future<R, boost::asio::executor>;

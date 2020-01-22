@@ -1,10 +1,11 @@
-#if !defined(CORIO_THREAD_UNSAFE_COROUTINE_PROMISE_FWD_HPP_INCLUDE_GUARD)
-#define CORIO_THREAD_UNSAFE_COROUTINE_PROMISE_FWD_HPP_INCLUDE_GUARD
+#if !defined(CORIO_THREAD_UNSAFE_COROUTINE_PROMISE_HPP_INCLUDE_GUARD)
+#define CORIO_THREAD_UNSAFE_COROUTINE_PROMISE_HPP_INCLUDE_GUARD
 
 #include <corio/thread_unsafe/coroutine.hpp>
 #include <corio/thread_unsafe/future.hpp>
 #include <corio/thread_unsafe/promise.hpp>
 #include <corio/core/enable_if_executor.hpp>
+#include <corio/core/is_executor.hpp>
 #include <corio/core/enable_if_execution_context.hpp>
 #include <corio/core/error.hpp>
 #include <corio/util/throw.hpp>
@@ -64,7 +65,7 @@ protected:
 
   void set_executor(executor_type const &executor)
   {
-    promise_.set_executor(executor);
+    set_executor_(executor_type(executor));
   }
 
   void set_executor(executor_type &&executor)
@@ -120,7 +121,7 @@ protected:
   }
 
   template<typename T>
-  std::decay_t<T> await_transform(T &&awaitable)
+  std::remove_cv_t<T> await_transform(T &&awaitable)
   {
     using type = std::decay_t<T>;
     if constexpr (can_have_executor<type>(0)) {
@@ -142,12 +143,11 @@ protected:
       set_executor(awaitable.get_executor());
       return std::forward<T>(awaitable);
     }
-    else {
-      if (!has_executor()) {
-        CORIO_THROW<corio::no_executor_error>();
-      }
-      return std::forward<T>(awaitable);
+
+    if (!has_executor()) {
+      CORIO_THROW<corio::no_executor_error>();
     }
+    return std::forward<T>(awaitable);
   }
 
   void unhandled_exception() noexcept
@@ -189,15 +189,29 @@ public:
 
   basic_coroutine_promise() = default;
 
-  template<typename T, typename... Args>
-  explicit basic_coroutine_promise(
-    T &ctx, Args &&..., corio::enable_if_execution_context_t<T> * = nullptr)
-    : mixin_type_(ctx.get_executor())
+  template<typename... Args>
+  explicit basic_coroutine_promise(executor_type const &executor, Args &&...)
+    : basic_coroutine_promise(executor_type(executor))
+  {}
+
+  template<typename... Args>
+  explicit basic_coroutine_promise(executor_type &&executor, Args &&...)
+    : mixin_type_(std::move(executor))
   {}
 
   template<typename T, typename... Args>
   explicit basic_coroutine_promise(
-    T &ctx, Args &&..., corio::disable_if_execution_context_t<T> * = nullptr)
+    T &ctx, Args &&...,
+    corio::enable_if_execution_context_t<T> * = nullptr,
+    corio::disable_if_executor_t<T> * = nullptr)
+    : basic_coroutine_promise(ctx.get_executor())
+  {}
+
+  template<typename T, typename... Args>
+  explicit basic_coroutine_promise(
+    T &ctx, Args &&...,
+    corio::disable_if_execution_context_t<T> * = nullptr,
+    corio::disable_if_executor_t<T> * = nullptr)
     : mixin_type_()
   {}
 
@@ -263,16 +277,16 @@ public:
   template<typename T, typename... Args>
   explicit basic_coroutine_promise(
     T &ctx, Args &&...,
-    corio::enable_if_execution_context_t<std::decay_t<T> > * = nullptr,
-    corio::disable_if_executor_t<std::decay_t<T> > * = nullptr)
+    corio::enable_if_execution_context_t<T> * = nullptr,
+    corio::disable_if_executor_t<T> * = nullptr)
     : basic_coroutine_promise(ctx.get_executor())
   {}
 
   template<typename T, typename... Args>
   explicit basic_coroutine_promise(
     T &ctx, Args &&...,
-    corio::disable_if_execution_context_t<std::decay_t<T> > * = nullptr,
-    corio::disable_if_executor_t<std::decay_t<T> > * = nullptr)
+    corio::disable_if_execution_context_t<T> * = nullptr,
+    corio::disable_if_executor_t<T> * = nullptr)
     : mixin_type_()
   {}
 
@@ -305,4 +319,4 @@ public:
 
 } // namespace corio::thread_unsafe
 
-#endif // !defined(CORIO_THREAD_UNSAFE_COROUTINE_PROMISE_FWD_HPP_INCLUDE_GUARD)
+#endif // !defined(CORIO_THREAD_UNSAFE_COROUTINE_PROMISE_HPP_INCLUDE_GUARD)
