@@ -14,73 +14,97 @@ namespace corio{
 template<typename T>
 auto get(std::variant<T, std::exception_ptr> const &v)
 {
-  try {
-    return std::get<0u>(v);
+  T const *p = std::get_if<0u>(&v);
+  if (BOOST_LIKELY(p != nullptr)) /*[[likely]]*/ {
+    return *p;
   }
-  catch (std::bad_variant_access const &) {
-    std::exception_ptr p = std::get<1u>(v);
-    std::rethrow_exception(std::move(p));
-  }
+  std::rethrow_exception(*std::get_if<1u>(&v));
 }
 
 template<typename T>
 auto get(std::variant<T, std::exception_ptr> &&v)
 {
-  try {
-    return std::get<0u>(v);
+  T *p = std::get_if<0u>(&v);
+  if (BOOST_LIKELY(p != nullptr)) /*[[likely]]*/ {
+    return std::move(*p);
   }
-  catch (std::bad_variant_access const &) {
-    std::exception_ptr p = std::get<1u>(v);
-    std::rethrow_exception(std::move(p));
-  }
+  std::rethrow_exception(*std::get_if<1u>(&v));
 }
 
 template<typename T>
 T &get(std::variant<std::reference_wrapper<T>, std::exception_ptr> &v)
 {
-  try {
-    return std::get<0u>(v);
+  auto p = std::get_if<0u>(&v);
+  if (BOOST_LIKELY(p != nullptr)) /*[[likely]]*/ {
+    return *p;
   }
-  catch (std::bad_variant_access const &) {
-    std::exception_ptr p = std::get<1u>(v);
-    std::rethrow_exception(std::move(p));
-  }
+  std::rethrow_exception(*std::get_if<1u>(&v));
 }
 
 template<typename T>
 T const &get(std::variant<std::reference_wrapper<T>, std::exception_ptr> const &v)
 {
-  try {
-    return std::get<0u>(v);
+  auto const *p = std::get_if<0u>(&v);
+  if (BOOST_LIKELY(p != nullptr)) /*[[likely]]*/ {
+    return *p;
   }
-  catch (std::bad_variant_access const &) {
-    std::exception_ptr p = std::get<1u>(v);
-    std::rethrow_exception(std::move(p));
-  }
+  std::rethrow_exception(*std::get_if<1u>(&v));
 }
 
 template<typename T>
 T &get(std::variant<std::reference_wrapper<T>, std::exception_ptr> &&v)
 {
-  try {
-    return std::get<0u>(std::move(v));
+  auto *p = std::get_if<0u>(&v);
+  if (BOOST_LIKELY(p != nullptr)) /*[[likely]]*/ {
+    return *p;
   }
-  catch (std::bad_variant_access const &) {
-    std::exception_ptr p = std::get<1u>(v);
-    std::rethrow_exception(std::move(p));
-  }
+  std::rethrow_exception(*std::get_if<1u>(&v));
 }
 
 template<typename T>
 T const &get(std::variant<std::reference_wrapper<T>, std::exception_ptr> const &&v)
 {
-  try {
-    return std::get<0u>(std::move(v));
+  auto const *p = std::get_if<0u>(&v);
+  if (BOOST_LIKELY(p != nullptr)) /*[[likely]]*/ {
+    return *p;
   }
-  catch (std::bad_variant_access const &) {
-    std::exception_ptr p = std::get<1u>(v);
-    std::rethrow_exception(std::move(p));
+  std::rethrow_exception(*std::get_if<1u>(&v));
+}
+
+inline void get(std::variant<std::monostate, std::exception_ptr> &v)
+{
+  std::monostate *p = std::get_if<0u>(&v);
+  if (BOOST_LIKELY(p != nullptr)) /*[[likely]]*/ {
+    return;
   }
+  std::rethrow_exception(*std::get_if<1u>(&v));
+}
+
+inline void get(std::variant<std::monostate, std::exception_ptr> const &v)
+{
+  std::monostate const *p = std::get_if<0u>(&v);
+  if (BOOST_LIKELY(p != nullptr)) /*[[likely]]*/ {
+    return;
+  }
+  std::rethrow_exception(*std::get_if<1u>(&v));
+}
+
+inline void get(std::variant<std::monostate, std::exception_ptr> &&v)
+{
+  std::monostate *p = std::get_if<0u>(&v);
+  if (BOOST_LIKELY(p != nullptr)) /*[[likely]]*/ {
+    return;
+  }
+  std::rethrow_exception(*std::get_if<1u>(&v));
+}
+
+inline void get(std::variant<std::monostate, std::exception_ptr> const &&v)
+{
+  std::monostate const *p = std::get_if<0u>(&v);
+  if (BOOST_LIKELY(p != nullptr)) /*[[likely]]*/ {
+    return;
+  }
+  std::rethrow_exception(*std::get_if<1u>(&v));
 }
 
 } // namespace corio

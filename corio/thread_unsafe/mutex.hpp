@@ -1,25 +1,33 @@
 #if !defined(CORIO_THREAD_UNSAFE_MUTEX_HPP_INCLUDE_GUARD)
 #define CORIO_THREAD_UNSAFE_MUTEX_HPP_INCLUDE_GUARD
 
+#include <corio/core/enable_if_executor.hpp>
+#include <corio/core/is_executor.hpp>
+#include <corio/core/enable_if_execution_context.hpp>
 #include <corio/core/error.hpp>
+#include <corio/util/exception_guard.hpp>
 #include <corio/util/throw.hpp>
 #include <corio/util/assert.hpp>
 #include <boost/asio/defer.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/executor.hpp>
 #include <boost/asio/async_result.hpp>
-#include <boost/asio/execution_context.hpp>
+#include <boost/config.hpp>
 #include <mutex>
 #include <deque>
 #include <type_traits>
-#include <functional>
+#include <optional>
 #include <utility>
 
 
 namespace corio::thread_unsafe{
 
+template<typename Executor>
+class basic_mutex;
+
 namespace detail_{
 
-class mutex_handler_
+class mutex_completion_handler_
 {
 private:
   class impl_base_
@@ -28,21 +36,26 @@ private:
     virtual ~impl_base_()
     {}
 
+    virtual void adopt_lock(void *p) noexcept = 0;
+
     virtual void operator()() = 0;
   }; // class impl_base_
 
-  template<typename F>
+  template<typename F, typename Executor>
   class impl_ final
     : public impl_base_
   {
   private:
-    static_assert(!std::is_const_v<F>);
-    static_assert(!std::is_volatile_v<F>);
-    static_assert(!std::is_reference_v<F>);
+    using decayed_type_ = std::decay_t<F>;
+    using executor_type_ = Executor;
+    static_assert(corio::is_executor_v<executor_type_>);
+    using mutex_type_ = basic_mutex<executor_type_>;
+    using lock_type_ = std::unique_lock<mutex_type_>;
 
   public:
-    impl_(F &&f)
-      : f_(std::move(f))
+    explicit impl_(F &&f)
+      : f_(std::move(f)),
+        lock_()
     {}
 
     impl_(impl_ const &) = delete;
@@ -50,237 +63,161 @@ private:
     impl_ &operator=(impl_ const &) = delete;
 
   private:
+    virtual void adopt_lock(void *p) noexcept override final
+    {
+      CORIO_ASSERT(lock_.mutex() != nullptr);
+      CORIO_ASSERT(p != nullptr);
+      mutex_type_ &mutex = *static_cast<mutex_type_ *>(p);
+      lock_ = lock_type_(mutex, std::adopt_lock);
+    }
+
     virtual void operator()() override final
     {
-      std::move(f_)();
+      CORIO_ASSERT(lock_.mutex() != nullptr);
+      std::move(f_)(std::move(lock_));
     }
 
   private:
-    F f_;
+    decayed_type_ f_;
+    lock_type_ lock_;
   }; // class impl_
 
 public:
-  template<typename F>
-  explicit mutex_handler_(F &&f)
-    : p_(new impl_<F>(std::move(f)))
+  template<typename F, typename Executor>
+  explicit mutex_completion_handler_(
+    F &&f, std::type_identity<Executor>, corio::enable_if_executor_t<Executor> * = nullptr)
+    : p_(new impl_<F, Executor>(std::forward<F>(f)))
   {}
 
-  mutex_handler_(mutex_handler_ const &) = delete;
+  mutex_completion_handler_(mutex_completion_handler_ const &) = delete;
 
-  mutex_handler_(mutex_handler_ &&rhs)
+  mutex_completion_handler_(mutex_completion_handler_ &&rhs) noexcept
     : p_(rhs.p_)
   {
     rhs.p_ = nullptr;
   }
 
-  mutex_handler_ &operator=(mutex_handler_ const &) = delete;
+  ~mutex_completion_handler_()
+  {
+    if (p_ != nullptr) {
+      delete p_;
+    }
+  }
+
+  mutex_completion_handler_ &operator=(mutex_completion_handler_ const &) = delete;
+
+  void adopt_lock(void *p) noexcept
+  {
+    CORIO_ASSERT(p_ != nullptr);
+    CORIO_ASSERT(p != nullptr);
+    p_->adopt_lock(p);
+  }
 
   void operator()()
   {
-    if (p_ == nullptr) {
-      CORIO_THROW<std::bad_function_call>();
-    }
+    CORIO_ASSERT(p_ != nullptr);
     (*p_)();
   }
 
-  ~mutex_handler_()
-  {
-    if (p_ != nullptr) {
-      delete p_;
-    }
-  }
-
 private:
   impl_base_ *p_;
-}; // class mutex_handler_
-
-template<typename ExecutionContext>
-class mutex_context_mixin_
-{
-protected:
-  using context_type = ExecutionContext;
-  static_assert(!std::is_const_v<context_type>);
-  static_assert(!std::is_volatile_v<context_type>);
-  static_assert(!std::is_reference_v<context_type>);
-  static_assert(std::is_convertible_v<context_type &, boost::asio::execution_context &>);
-  using executor_type = typename context_type::executor_type;
-
-  explicit mutex_context_mixin_(context_type &ctx) noexcept
-    : ctx_(ctx)
-  {}
-
-  mutex_context_mixin_(mutex_context_mixin_ const &) = delete;
-
-  mutex_context_mixin_ &operator=(mutex_context_mixin_ const &) = delete;
-
-  template<typename T>
-  void set_context(T &) = delete;
-
-  template<typename CompletionHandler>
-  void post(CompletionHandler &&h)
-  {
-    executor_type ex = ctx_.get_executor();
-    boost::asio::post(ex, std::move(h));
-  }
-
-  template<typename CompletionHandler>
-  void defer(CompletionHandler &&h)
-  {
-    executor_type ex = ctx_.get_executor();
-    boost::asio::defer(ex, std::move(h));
-  }
-
-private:
-  context_type &ctx_;
-}; // class mutex_context_mixin_
-
-template<>
-class mutex_context_mixin_<void>
-{
-private:
-  class impl_base_
-  {
-  public:
-    virtual ~impl_base_()
-    {}
-
-    virtual void post(mutex_handler_ &&h) = 0;
-
-    virtual void defer(mutex_handler_ &&h) = 0;
-  }; // class impl_base_
-
-  template<typename ExecutionContext>
-  class impl_ final
-    : public impl_base_
-  {
-  public:
-    using context_type = ExecutionContext;
-    static_assert(!std::is_const_v<context_type>);
-    static_assert(!std::is_volatile_v<context_type>);
-    static_assert(!std::is_reference_v<context_type>);
-    static_assert(std::is_convertible_v<context_type &, boost::asio::execution_context &>);
-    using executor_type = typename context_type::executor_type;
-
-    explicit impl_(context_type &ctx)
-      : ctx_(ctx)
-    {}
-
-    impl_(impl_ const &) = delete;
-
-    impl_ &operator=(impl_ const &) = delete;
-
-  private:
-    virtual void post(mutex_handler_ &&h) override final
-    {
-      executor_type ex = ctx_.get_executor();
-      boost::asio::post(ex, std::move(h));
-    }
-
-    virtual void defer(mutex_handler_ &&h) override final
-    {
-      executor_type ex = ctx_.get_executor();
-      boost::asio::defer(ex, std::move(h));
-    }
-
-  private:
-    context_type &ctx_;
-  }; // class impl_
-
-protected:
-  mutex_context_mixin_() noexcept
-    : p_()
-  {}
-
-  mutex_context_mixin_(mutex_context_mixin_ const &) = delete;
-
-  ~mutex_context_mixin_()
-  {
-    if (p_ != nullptr) {
-      delete p_;
-    }
-  }
-
-  mutex_context_mixin_ &operator=(mutex_context_mixin_ const &) = delete;
-
-  template<typename ExecutionContext>
-  void set_context(ExecutionContext &ctx)
-  {
-    if (p_ != nullptr) {
-      CORIO_THROW<corio::context_already_set_error>("");
-    }
-    p_ = new impl_<ExecutionContext>(ctx);
-  }
-
-  void post(mutex_handler_ &&h)
-  {
-    if (p_ == nullptr) {
-      CORIO_THROW<corio::no_context_error>("");
-    }
-    p_->post(std::move(h));
-  }
-
-  void defer(mutex_handler_ &&h)
-  {
-    if (p_ == nullptr) {
-      CORIO_THROW<corio::no_context_error>("");
-    }
-    p_->defer(std::move(h));
-  }
-
-private:
-  impl_base_ *p_;
-}; // class mutex_context_mixin_<void>
+}; // class mutex_completion_handler_
 
 } // namespace detail_
 
-template<typename ExecutionContext>
+template<typename Executor>
 class basic_mutex
-  : private detail_::mutex_context_mixin_<ExecutionContext>
 {
 public:
-  using context_type = ExecutionContext;
-  static_assert(!std::is_const_v<context_type>);
-  static_assert(!std::is_volatile_v<context_type>);
-  static_assert(!std::is_reference_v<context_type>);
+  using executor_type = Executor;
+  static_assert(corio::is_executor_v<executor_type>);
+  using lock_type = std::unique_lock<basic_mutex<executor_type> >;
 
 private:
-  using context_mixin_type_ = detail_::mutex_context_mixin_<ExecutionContext>;
-  using handler_queue_type_ = std::deque<detail_::mutex_handler_>;
+  using handler_queue_type_ = std::deque<detail_::mutex_completion_handler_>;
 
 public:
-  basic_mutex() = default;
-
-  template<typename T>
-  explicit basic_mutex(T &ctx, std::enable_if_t<std::is_same_v<T, context_type> > * = nullptr)
-    : context_mixin_type_(ctx),
+  basic_mutex()
+    : executor_(),
       handler_queue_(),
       locked_()
+  {}
+
+  explicit basic_mutex(executor_type const &executor)
+    : basic_mutex(executor_type(executor))
+  {}
+
+  explicit basic_mutex(executor_type &&executor)
+    : executor_(std::move(executor)),
+      handler_queue_(),
+      locked_()
+  {}
+
+  template<typename ExecutionContext>
+  explicit basic_mutex(
+    ExecutionContext &ctx,
+    corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
+    corio::disable_if_executor<ExecutionContext> * = nullptr)
+    : basic_mutex(ctx.get_executor())
   {}
 
   basic_mutex(basic_mutex const &) = delete;
 
   basic_mutex &operator=(basic_mutex const &) = delete;
 
-  using context_mixin_type_::set_context;
+  bool has_executor() const noexcept
+  {
+    return executor_.has_value();
+  }
+
+  void set_executor(executor_type const &executor)
+  {
+    if (BOOST_UNLIKELY(executor_.has_value())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::executor_already_assigned_error>();
+    }
+    executor_.emplace(executor);
+  }
+
+  void set_executor(executor_type &&executor)
+  {
+    executor_.emplace(std::move(executor));
+  }
+
+  executor_type get_executor() const
+  {
+    if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_executor_error>();
+    }
+    return executor_.value();
+  }
 
   template<typename CompletionToken>
   auto async_lock(CompletionToken &&token)
   {
-    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>,  void()>;
+    if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_executor_error>();
+    }
+    using async_result_type = boost::asio::async_result<
+      std::decay_t<CompletionToken>, void(lock_type)>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
-    completion_handler_type completion_handler(std::move(token));
+    completion_handler_type completion_handler(std::forward<CompletionToken>(token));
     async_result_type async_result(completion_handler);
-
     if (!locked_) {
       locked_ = true;
-      detail_::mutex_handler_ h(std::move(completion_handler));
-      context_mixin_type_::defer(std::move(h));
+      CORIO_EXCEPTION_GUARD(eg){
+        locked_ = false;
+      };
+      detail_::mutex_completion_handler_ h(
+        std::move(completion_handler), std::type_identity<executor_type>());
+      h.adopt_lock(this);
+      eg.dismiss();
+      boost::asio::defer(executor_.value(), std::move(h));
     }
     else {
-      detail_::mutex_handler_ h(std::move(completion_handler));
+      detail_::mutex_completion_handler_ h(
+        std::move(completion_handler), std::type_identity<executor_type>());
       handler_queue_.emplace_back(std::move(h));
     }
-
     return async_result.get();
   }
 
@@ -291,20 +228,34 @@ public:
 
   void unlock()
   {
+    if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_executor_error>();
+    }
     CORIO_ASSERT(locked_);
     locked_ = false;
     if (!handler_queue_.empty()) {
       locked_ = true;
-      detail_::mutex_handler_ h = std::move(handler_queue_.front());
+      CORIO_EXCEPTION_GUARD(eg){
+        locked_ = false;
+      };
+      detail_::mutex_completion_handler_ h = std::move(handler_queue_.front());
+      CORIO_EXCEPTION_GUARD(){
+        handler_queue_.emplace_front(std::move(h));
+      };
       handler_queue_.pop_front();
-      context_mixin_type_::post(std::move(h));
+      h.adopt_lock(this);
+      eg.dismiss();
+      boost::asio::post(executor_.value(), std::move(h));
     }
   }
 
 private:
+  std::optional<executor_type> executor_;
   handler_queue_type_ handler_queue_;
-  bool locked_ = false;
+  bool locked_;
 }; // class basic_mutex
+
+using mutex = basic_mutex<boost::asio::executor>;
 
 } // namespace corio::thread_unsafe
 
