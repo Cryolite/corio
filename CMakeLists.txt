@@ -123,7 +123,6 @@ add_executable(corio_test
   test/util/scope_guard.cpp
   test/util/index_pack.cpp
   test/util/throw.cpp
-  test/core/get.cpp
   test/thread_unsafe/coroutine.cpp
   test/thread_unsafe/mutex.cpp
   test/thread_unsafe/promise.cpp)

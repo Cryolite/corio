@@ -1,7 +1,6 @@
 #include <corio/thread_unsafe/promise.hpp>
 
 #include <corio/thread_unsafe/future.hpp>
-#include <corio/core/get.hpp>
 #include <gtest/gtest.h>
 #include <boost/asio/io_context.hpp>
 

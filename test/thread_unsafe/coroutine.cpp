@@ -1,6 +1,5 @@
 #include <corio/thread_unsafe/coroutine.hpp>
 
-#include <corio/core/get.hpp>
 #include <gtest/gtest.h>
 #include <boost/asio/io_service.hpp>
 #include <experimental/coroutine>
