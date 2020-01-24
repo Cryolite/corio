@@ -26,6 +26,7 @@ TEST(coroutine, void_co_return)
   context ctx;
   corio::coroutine<void> coro = void_co_return();
   coro.set_executor(ctx.get_executor());
+#if 0
   EXPECT_EQ(i, 0);
   ASSERT_FALSE(coro.done());
   coro.resume();
@@ -46,7 +47,10 @@ TEST(coroutine, void_co_return)
   EXPECT_EQ(j, 42);
   EXPECT_EQ(count, 1u);
   EXPECT_TRUE(ctx.stopped());
+#endif
 }
+
+#if 0
 
 namespace{
 
@@ -94,3 +98,5 @@ TEST(coroutine, void_co_await)
   EXPECT_EQ(count, 1u);
   EXPECT_TRUE(ctx.stopped());
 }
+
+#endif

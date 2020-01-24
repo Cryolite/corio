@@ -23,6 +23,7 @@ int main()
   using context = boost::asio::io_context;
   context ctx;
 
+#if 0
   auto coro3 = sleep_sort(3);
   coro3.set_executor(ctx.get_executor());
   boost::asio::post([&coro3]() -> void{ coro3.resume(); });
@@ -52,10 +53,11 @@ int main()
   boost::asio::post([&coro6]() -> void{ coro6.resume(); });
   auto coro0 = sleep_sort(0);
   coro0.set_executor(ctx.get_executor());
-  boost::asio::post([&coro0]() -> void{ coro0.resume(); });
+  boost::asio::post([coro = std::move(coro0)]() mutable -> void{ coro.resume(); });
+#endif
 
   {
-    auto work_guard = boost::asio::make_work_guard(ctx);
-    ctx.run();
+    //auto work_guard = boost::asio::make_work_guard(ctx);
+    //ctx.run();
   }
 }

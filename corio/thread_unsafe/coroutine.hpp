@@ -5,7 +5,6 @@
 #include <corio/core/is_executor.hpp>
 #include <corio/core/error.hpp>
 #include <corio/util/throw.hpp>
-#include <corio/util/assert.hpp>
 #include <boost/asio/executor.hpp>
 #include <boost/config.hpp>
 #include <utility>
@@ -34,35 +33,36 @@ public:
 private:
   friend class basic_coroutine_promise<R, executor_type>;
 
-  basic_coroutine(handle_type_ &&handle, future_type &&future) noexcept
-    : handle_(std::move(handle)),
-      future_(std::move(future))
-  {}
+  basic_coroutine(promise_type &promise) noexcept
+    : p_(&promise)
+  {
+    p_->acquire();
+  }
 
 public:
-  basic_coroutine() = default;
+  basic_coroutine() noexcept
+    : p_()
+  {}
 
   basic_coroutine(basic_coroutine const &) = delete;
 
-  basic_coroutine(basic_coroutine &&rhs)
-    : handle_(std::move(rhs.handle_)),
-      future_(std::move(rhs.future_))
+  basic_coroutine(basic_coroutine &&rhs) noexcept
+    : p_(rhs.p_)
   {
-    rhs.handle_ = nullptr;
+    rhs.p_ = nullptr;
   }
 
   ~basic_coroutine()
   {
-    if (handle_ != nullptr) {
-      handle_.destroy();
+    if (p_ != nullptr) {
+      p_->release();
     }
   }
 
   void swap(basic_coroutine &rhs) noexcept
   {
     using std::swap;
-    swap(handle_, rhs.handle_);
-    swap(future_, rhs.future_);
+    swap(p_, rhs.p_);
   }
 
   friend void swap(basic_coroutine &lhs, basic_coroutine &rhs) noexcept
@@ -80,10 +80,10 @@ public:
 
   bool has_executor() const
   {
-    if (BOOST_UNLIKELY(!future_.valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
+    if (BOOST_UNLIKELY(p_ == nullptr)) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::invalid_coroutine_error>();
     }
-    return future_.has_executor();
+    return p_->has_executor();
   }
 
   void set_executor(executor_type const &executor)
@@ -93,53 +93,27 @@ public:
 
   void set_executor(executor_type &&executor)
   {
-    if (BOOST_UNLIKELY(!future_.valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
+    if (BOOST_UNLIKELY(p_ == nullptr)) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::invalid_coroutine_error>();
     }
-    future_.set_executor(std::move(executor));
+    p_->set_executor(std::move(executor));
   }
 
   executor_type get_executor() const
   {
-    if (BOOST_UNLIKELY(!future_.valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
+    if (BOOST_UNLIKELY(p_ == nullptr)) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::invalid_coroutine_error>();
     }
-    return future_.get_executor();
+    return p_->get_executor();
   }
 
   bool valid() const noexcept
   {
-    CORIO_ASSERT((handle_ != nullptr) == future_.valid());
-    return handle_ != nullptr;
-  }
-
-  void resume()
-  {
-    if (!valid()) {
-      CORIO_THROW<corio::invalid_coroutine_error>();
-    }
-    if (done()) {
-      CORIO_THROW<corio::coroutine_already_done_error>();
-    }
-    handle_.resume();
-  }
-
-  bool done() const
-  {
-    if (!valid()) {
-      CORIO_THROW<corio::invalid_coroutine_error>();
-    }
-    return handle_.done();
-  }
-
-  future_type get_future() &&
-  {
-    return std::move(future_);
+    return p_ != nullptr;
   }
 
 private:
-  handle_type_ handle_;
-  future_type future_;
+  promise_type *p_;
 }; // class basic_coroutine
 
 template<typename R>
