@@ -14,7 +14,7 @@ namespace corio::thread_unsafe{
 
 template<typename Executor0, typename R, typename Executor1>
 void post(
-  Executor0 const &executor,
+  Executor0 &&executor,
   corio::thread_unsafe::basic_coroutine<R, Executor1> &&coro,
   corio::disable_if_execution_context_t<Executor0> * = nullptr,
   corio::enable_if_executor_t<Executor0> * = nullptr)
@@ -27,10 +27,17 @@ void post(
   else {
     coro.set_executor(executor);
   }
-  boost::asio::post(
-    [coro_ = std::move(coro)]() mutable -> void {
-      coro_.resume();
-    });
+  boost::asio::post(std::move(executor), [coro_ = std::move(coro)]() mutable -> void { coro_.resume(); });
+}
+
+template<typename Executor0, typename R, typename Executor1>
+void post(
+  Executor0 const &executor,
+  corio::thread_unsafe::basic_coroutine<R, Executor1> &&coro,
+  corio::disable_if_execution_context_t<Executor0> * = nullptr,
+  corio::enable_if_executor_t<Executor0> * = nullptr)
+{
+  corio::thread_unsafe::post(Executor0(executor), std::move(coro));
 }
 
 template<typename ExecutionContext, typename R, typename Executor>

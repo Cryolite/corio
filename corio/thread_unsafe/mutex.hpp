@@ -229,12 +229,12 @@ public:
 
   void unlock()
   {
-    if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_executor_error>();
-    }
     CORIO_ASSERT(locked_);
     locked_ = false;
     if (!handler_queue_.empty()) {
+      if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
+        CORIO_THROW<corio::no_executor_error>();
+      }
       locked_ = true;
       CORIO_EXCEPTION_GUARD(eg){
         locked_ = false;

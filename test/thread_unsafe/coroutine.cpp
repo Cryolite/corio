@@ -1,7 +1,12 @@
 #include <corio/thread_unsafe/coroutine.hpp>
 
+#include <corio/thread_unsafe/post.hpp>
+#include <corio/thread_unsafe/resume.hpp>
 #include <gtest/gtest.h>
+#include <boost/asio/system_timer.hpp>
 #include <boost/asio/io_service.hpp>
+#include <boost/system/system_error.hpp>
+#include <chrono>
 #include <experimental/coroutine>
 
 
@@ -12,91 +17,157 @@ namespace{
 
 int i = 0;
 
-corio::coroutine<void> void_co_return()
+corio::coroutine<void> f()
 {
-  ++i;
+  i *= 2;
   co_return;
 }
 
 } // namespace *unnamed*
 
-TEST(coroutine, void_co_return)
+TEST(coroutine, destruct)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  corio::coroutine<void> coro = void_co_return();
-  coro.set_executor(ctx.get_executor());
-#if 0
-  EXPECT_EQ(i, 0);
-  ASSERT_FALSE(coro.done());
-  coro.resume();
-  EXPECT_EQ(i, 1);
-  EXPECT_TRUE(coro.done());
-
-  corio::coroutine<void>::future_type future = std::move(coro).get_future();
-  int j = 0;
-  future.async_get(
-    [&j](auto v) -> void {
-      static_assert(std::is_void_v<decltype(corio::get(v))>);
-      corio::get(v);
-      j = 42;
-    });
-  EXPECT_EQ(j, 0);
-
-  context::count_type count = ctx.run();
-  EXPECT_EQ(j, 42);
-  EXPECT_EQ(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
-#endif
+  i = 42;
+  corio::coroutine<void> coro = f();
+  EXPECT_EQ(i, 42);
+  EXPECT_FALSE(coro.done());
 }
 
-#if 0
+TEST(coroutine, done_then_destruct)
+{
+  i = 42;
+  corio::coroutine<void> coro = f();
+  EXPECT_EQ(i, 42);
+  ASSERT_FALSE(coro.done());
+  coro.resume();
+  EXPECT_EQ(i, 84);
+  EXPECT_TRUE(coro.done());
+}
+
+TEST(coroutine, transfer_then_destruct_then_shutdown)
+{
+  i = 42;
+  {
+    boost::asio::io_context ctx;
+    {
+      corio::coroutine<void> coro = f();
+      EXPECT_EQ(i, 42);
+      EXPECT_FALSE(coro.done());
+      coro.set_executor(ctx.get_executor());
+      EXPECT_EQ(i, 42);
+      EXPECT_FALSE(coro.done());
+    }
+    EXPECT_EQ(i, 42);
+  }
+  EXPECT_EQ(i, 42);
+}
+
+TEST(coroutine, transfer_then_done_then_destruct_then_shutdown)
+{
+  i = 42;
+  {
+    boost::asio::io_context ctx;
+    {
+      corio::coroutine<void> coro = f();
+      EXPECT_EQ(i, 42);
+      ASSERT_FALSE(coro.done());
+      coro.set_executor(ctx.get_executor());
+      EXPECT_EQ(i, 42);
+      ASSERT_FALSE(coro.done());
+      coro.resume();
+      EXPECT_EQ(i, 84);
+      EXPECT_TRUE(coro.done());
+    }
+    EXPECT_EQ(i, 84);
+  }
+  EXPECT_EQ(i, 84);
+}
+
+TEST(coroutine, done_then_transfer_then_destruct_then_shutdown)
+{
+  i = 42;
+  {
+    boost::asio::io_context ctx;
+    {
+      corio::coroutine<void> coro = f();
+      EXPECT_EQ(i, 42);
+      ASSERT_FALSE(coro.done());
+      coro.resume();
+      EXPECT_EQ(i, 84);
+      EXPECT_TRUE(coro.done());
+      coro.set_executor(ctx.get_executor());
+      EXPECT_EQ(i, 84);
+      EXPECT_TRUE(coro.done());
+    }
+    EXPECT_EQ(i, 84);
+  }
+  EXPECT_EQ(i, 84);
+}
 
 namespace{
 
-corio::coroutine<void> void_co_await()
+bool timer_cancel_throw_ = false;
+
+corio::coroutine<void> async_wait_canceled_timer(boost::asio::system_timer &timer)
 {
-  ++i;
-  co_await std::experimental::suspend_always{};
-  ++i;
+  try {
+    static_assert(std::is_same_v<decltype(timer.async_wait(corio::resume)), corio::future<void> >);
+    co_await timer.async_wait(corio::resume);
+  }
+  catch (boost::system::system_error const &e) {
+    if (e.code().value() == boost::system::errc::operation_canceled) {
+      timer_cancel_throw_ = true;
+    }
+  }
+  co_return;
+}
+
+corio::coroutine<void> cancel_timer(boost::asio::system_timer &timer)
+{
+  timer.cancel();
   co_return;
 }
 
 } // namespace *unnamed*
 
-TEST(coroutine, void_co_await)
+TEST(coroutine, timer_cancel_throw)
 {
-  i = 0;
-
-  using context = boost::asio::io_context;
-  context ctx;
-  corio::coroutine<void> coro = void_co_await();
-  coro.set_executor(ctx.get_executor());
-  EXPECT_EQ(i, 0);
-  ASSERT_FALSE(coro.done());
-
-  coro.resume();
-  EXPECT_EQ(i, 1);
-  ASSERT_FALSE(coro.done());
-
-  coro.resume();
-  EXPECT_EQ(i, 2);
-  ASSERT_TRUE(coro.done());
-
-  corio::coroutine<void>::future_type future = std::move(coro).get_future();
-  int j = 0;
-  future.async_get(
-    [&](auto v) -> void{
-      static_assert(std::is_void_v<decltype(corio::get(v))>);
-      corio::get(v);
-      j = 42;
-    });
-  EXPECT_EQ(j, 0);
-
-  context::count_type count = ctx.run();
-  EXPECT_EQ(j, 42);
-  EXPECT_EQ(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  timer_cancel_throw_ = false;
+  boost::asio::io_context ctx;
+  boost::asio::system_timer timer(ctx);
+  timer.expires_after(std::chrono::seconds(1));
+  corio::post(ctx, async_wait_canceled_timer(timer));
+  corio::post(ctx, cancel_timer(timer));
+  ctx.run();
+  EXPECT_TRUE(timer_cancel_throw_);
 }
 
-#endif
+namespace{
+
+bool timer_cancel_nothrow_ = false;
+
+corio::coroutine<void> async_wait_canceled_timer_nothrow(boost::asio::system_timer &timer)
+{
+  static_assert(
+    std::is_same_v<decltype(timer.async_wait(corio::resume(std::nothrow))),
+                   corio::future<boost::system::error_code> >);
+  boost::system::error_code ec = co_await timer.async_wait(corio::resume(std::nothrow));
+  if (ec.value() == boost::system::errc::operation_canceled) {
+    timer_cancel_nothrow_ = true;
+  }
+  co_return;
+}
+
+} // namespace *unnamed*
+
+TEST(coroutine, timer_cancel_nothrow)
+{
+  timer_cancel_nothrow_ = false;
+  boost::asio::io_context ctx;
+  boost::asio::system_timer timer(ctx);
+  timer.expires_after(std::chrono::seconds(1));
+  corio::post(ctx, async_wait_canceled_timer_nothrow(timer));
+  corio::post(ctx, cancel_timer(timer));
+  ctx.run();
+  EXPECT_TRUE(timer_cancel_throw_);
+}
