@@ -7,59 +7,90 @@
 
 namespace corio{
 
-class context_already_set_error
-  : public std::runtime_error
+class no_executor_error
+  : public std::logic_error
 {
 public:
-  explicit context_already_set_error(std::string const &what)
-    : std::runtime_error(what)
+  explicit no_executor_error()
+    : std::logic_error("Attempting to perform an operation requiring"
+                       " an executor before assigning a executor.")
   {}
-}; // class context_already_set_error
+}; // class no_executor_error
 
-class no_context_error
-  : public std::runtime_error
+class bad_executor_error
+  : public std::logic_error
 {
 public:
-  explicit no_context_error(std::string const &what)
-    : std::runtime_error(what)
+  explicit bad_executor_error()
+    : std::logic_error("Attempting to perform an operation on a bad executor.")
   {}
-}; // class no_context_error
+}; // class bad_executor_error
+
+class executor_already_assigned_error
+  : public std::logic_error
+{
+public:
+  executor_already_assigned_error()
+    : std::logic_error("An executor has been already assigned to an awaitable object.")
+  {}
+}; // class executor_already_assigned_error
 
 class broken_promise_error
-  : public std::runtime_error
+  : public std::logic_error
 {
 public:
-  explicit broken_promise_error(std::string const &what)
-    : std::runtime_error(what)
+  broken_promise_error()
+    : std::logic_error("A promise object was destructed before any future object was retrieved from it.")
   {}
 }; // class broken_promise_error
 
 class future_already_retrieved_error
-  : public std::runtime_error
+  : public std::logic_error
 {
 public:
-  explicit future_already_retrieved_error(std::string const &what)
-    : std::runtime_error(what)
+  future_already_retrieved_error()
+    : std::logic_error("Attempting to retrieve a future object from a promise object"
+                       " from which a future object has been already retrieved.")
   {}
 }; // class future_already_retrieved_error
 
 class no_future_state_error
-  : public std::runtime_error
+  : public std::logic_error
 {
 public:
-  explicit no_future_state_error(std::string const &what)
-    : std::runtime_error(what)
+  no_future_state_error()
+    : std::logic_error("There is no shared future state, which indicates"
+                       " that a prohibited operation was made on a default-constructed or moved-from object.")
   {}
 }; // class no_future_state_error
 
 class promise_already_satisfied_error
-  : public std::runtime_error
+  : public std::logic_error
 {
 public:
-  explicit promise_already_satisfied_error(std::string const &what)
-    : std::runtime_error(what)
+  promise_already_satisfied_error()
+    : std::logic_error("Attempting to set a value or exception to an already satisfied promise object.")
   {}
 }; // class promise_already_satisfied_error
+
+class invalid_coroutine_error
+  : public std::logic_error
+{
+public:
+  invalid_coroutine_error()
+    : std::logic_error("Attempt to make a prohibited operation on an invalid coroutine object,"
+                       " which indicates that the object is default-constructed or moved-from.")
+  {}
+}; // class invalid_coroutine_error
+
+class coroutine_already_done_error
+  : public std::logic_error
+{
+public:
+  coroutine_already_done_error()
+    : std::logic_error("Attempting to resume an already done coroutine object.")
+  {}
+}; // class coroutine_already_done_error
 
 } // namespace corio
 

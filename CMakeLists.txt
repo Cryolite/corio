@@ -123,14 +123,19 @@ add_executable(corio_test
   test/util/scope_guard.cpp
   test/util/index_pack.cpp
   test/util/throw.cpp
-  test/core/get.cpp
   test/thread_unsafe/coroutine.cpp
   test/thread_unsafe/mutex.cpp
-  test/thread_unsafe/promise.cpp
-  test/thread_unsafe/contextless/mutex.cpp
-  test/thread_unsafe/contextless/promise.cpp)
-target_link_libraries(corio_test boost_stacktrace_backtrace gtest_main)
+  test/thread_unsafe/promise.cpp)
+target_link_libraries(corio_test
+  boost_stacktrace_backtrace
+  gtest_main)
 
 add_test(
   NAME corio_test
   COMMAND env ASAN_OPTIONS=detect_leaks=1 "${CMAKE_CURRENT_BINARY_DIR}/corio_test" --gtest_catch_exceptions=0)
+
+add_executable(sleep_sort
+  src/util/exception.cpp
+  sample/sleep_sort.cpp)
+target_link_libraries(sleep_sort
+  boost_stacktrace_backtrace)

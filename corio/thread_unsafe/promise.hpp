@@ -3,9 +3,13 @@
 
 #include <corio/thread_unsafe/future.hpp>
 #include <corio/thread_unsafe/detail_/shared_future_state_.hpp>
+#include <corio/core/enable_if_executor.hpp>
+#include <corio/core/is_executor.hpp>
+#include <corio/core/enable_if_execution_context.hpp>
+#include <corio/core/error.hpp>
 #include <corio/util/throw.hpp>
-#include <boost/asio/execution_context.hpp>
-#include <future>
+#include <boost/asio/executor.hpp>
+#include <boost/config.hpp>
 #include <type_traits>
 #include <utility>
 #include <exception>
@@ -15,112 +19,162 @@ namespace corio::thread_unsafe{
 
 namespace detail_{
 
-template<typename R, typename ExecutionContext>
-class promise_base_
+template<typename R, typename Executor>
+class promise_mixin_
 {
-protected:
-  using context_type = ExecutionContext;
+private:
+  static_assert(!std::is_const_v<R>);
+  static_assert(!std::is_volatile_v<R>);
+  static_assert(!std::is_rvalue_reference_v<R>);
 
-  static_assert(!std::is_const_v<context_type>);
-  static_assert(!std::is_volatile_v<context_type>);
-  static_assert(!std::is_reference_v<context_type>);
-  static_assert(std::is_convertible_v<context_type &, boost::asio::execution_context &>);
+protected:
+  using executor_type = Executor;
+  static_assert(corio::is_executor_v<executor_type>);
 
 private:
-  using state_type_ = corio::thread_unsafe::detail_::shared_future_state_<R, context_type>;
+  using state_type_ = corio::thread_unsafe::detail_::shared_future_state_<R, executor_type>;
 
 protected:
-  promise_base_()
+  using future_type = corio::thread_unsafe::basic_future<R, executor_type>;
+
+  promise_mixin_()
     : state_(),
       future_already_retrieved_()
   {}
 
-  explicit promise_base_(context_type &ctx)
-    : state_(ctx),
+  explicit promise_mixin_(executor_type &&executor)
+    : state_(std::move(executor)),
       future_already_retrieved_()
   {}
 
-  promise_base_(promise_base_ const &) = delete;
+  promise_mixin_(promise_mixin_ const &) = delete;
 
-  promise_base_(promise_base_ &&rhs) noexcept
+  promise_mixin_(promise_mixin_ &&rhs) noexcept
     : state_(std::move(rhs.state_)),
       future_already_retrieved_(rhs.future_already_retrieved_)
   {
     rhs.future_already_retrieved_ = false;
   }
 
-  ~promise_base_()
+  ~promise_mixin_()
   {
-    if (!state_.ready()) {
-      std::exception_ptr p = std::make_exception_ptr(std::future_error(std::future_errc::broken_promise));
+    if (future_already_retrieved_ && has_executor() && !state_.ready()) {
+      std::exception_ptr p = std::make_exception_ptr(corio::broken_promise_error());
       state_.set_exception(std::move(p));
     }
   }
 
-  void swap(promise_base_ &rhs) noexcept
+  void swap(promise_mixin_ &rhs) noexcept
   {
     using std::swap;
     swap(state_, rhs.state_);
     swap(future_already_retrieved_, rhs.future_already_retrieved_);
   }
 
-  promise_base_ &operator=(promise_base_ const &) = delete;
+  promise_mixin_ &operator=(promise_mixin_ const &) = delete;
 
-  promise_base_ &operator=(promise_base_ &&rhs) noexcept
+  promise_mixin_ &operator=(promise_mixin_ &&rhs) noexcept
   {
-    promise_base_(std::move(rhs)).swap(*this);
+    promise_mixin_(std::move(rhs)).swap(*this);
     return *this;
   }
 
-  corio::thread_unsafe::basic_future<R, context_type> get_future()
+  bool has_executor() const
   {
-    if (future_already_retrieved_) {
-      CORIO_THROW<std::future_error>(std::future_errc::future_already_retrieved);
+    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_future_state_error>();
     }
-    if (!state_.valid()) {
-      CORIO_THROW<std::future_error>(std::future_errc::no_state);
+    return state_.has_executor();
+  }
+
+  void set_executor(executor_type const &executor)
+  {
+    set_executor(executor_type(executor));
+  }
+
+  void set_executor(executor_type &&executor)
+  {
+    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_future_state_error>();
     }
-    corio::thread_unsafe::basic_future<R, context_type> future(state_);
+    state_.set_executor(std::move(executor));
+  }
+
+  executor_type get_executor() const
+  {
+    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_future_state_error>();
+    }
+    return state_.get_executor();
+  }
+
+  future_type get_future()
+  {
+    if (BOOST_UNLIKELY(future_already_retrieved_)) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::future_already_retrieved_error>();
+    }
+    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_future_state_error>();
+    }
+    future_type future(state_);
     future_already_retrieved_ = true;
     return future;
   }
 
   void set_exception(std::exception_ptr p)
   {
-    if (state_.ready()) {
-      CORIO_THROW<std::future_error>(std::future_errc::promise_already_satisfied);
+    if (BOOST_UNLIKELY(state_.ready())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::promise_already_satisfied_error>();
     }
-    if (!state_.valid()) {
-      CORIO_THROW<std::future_error>(std::future_errc::no_state);
+    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_future_state_error>();
     }
     state_.set_exception(std::move(p));
   }
 
 protected:
   state_type_ state_;
-  bool future_already_retrieved_;
-}; // class promise_base_
+  bool future_already_retrieved_ = false;
+}; // class promise_mixin_
 
 } // namespace detail_
 
-template<typename R, typename ExecutionContext>
+template<typename R, typename Executor>
 class basic_promise
-  : private detail_::promise_base_<R, ExecutionContext>
+  : private detail_::promise_mixin_<R, Executor>
 {
+public:
+  using executor_type = Executor;
+  static_assert(corio::is_executor_v<executor_type>);
+
 private:
-  using base_type_ = detail_::promise_base_<R, ExecutionContext>;
-  using base_type_::state_;
+  using mixin_type_ = detail_::promise_mixin_<R, executor_type>;
+  using mixin_type_::state_;
 
 public:
-  using typename base_type_::context_type;
+  using typename mixin_type_::future_type;
 
-  explicit basic_promise(context_type &ctx)
-    : base_type_(ctx)
+  basic_promise() = default;
+
+  explicit basic_promise(executor_type const &executor)
+    : basic_promise(executor_type(executor))
+  {}
+
+  explicit basic_promise(executor_type &&executor)
+    : mixin_type_(std::move(executor))
+  {}
+
+  template<typename ExecutionContext>
+  explicit basic_promise(
+    ExecutionContext &ctx,
+    corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
+    corio::disable_if_executor_t<ExecutionContext> * = nullptr)
+    : basic_promise(ctx.get_executor())
   {}
 
   void swap(basic_promise &rhs) noexcept
   {
-    base_type_::swap(rhs);
+    mixin_type_::swap(rhs);
   }
 
   friend void swap(basic_promise &lhs, basic_promise &rhs) noexcept
@@ -128,51 +182,75 @@ public:
     lhs.swap(rhs);
   }
 
-  using base_type_::get_future;
+  using mixin_type_::has_executor;
+
+  using mixin_type_::set_executor;
+
+  using mixin_type_::get_executor;
+
+  using mixin_type_::get_future;
 
   void set_value(R const &value)
   {
-    if (state_.ready()) {
-      CORIO_THROW<std::future_error>(std::future_errc::promise_already_satisfied);
+    if (BOOST_UNLIKELY(state_.ready())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::promise_already_satisfied_error>();
     }
-    if (!state_.valid()) {
-      CORIO_THROW<std::future_error>(std::future_errc::no_state);
+    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_future_state_error>();
     }
     state_.set_value(value);
   }
 
   void set_value(R &&value)
   {
-    if (state_.ready()) {
-      CORIO_THROW<std::future_error>(std::future_errc::promise_already_satisfied);
+    if (BOOST_UNLIKELY(state_.ready())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::promise_already_satisfied_error>();
     }
-    if (!state_.valid()) {
-      CORIO_THROW<std::future_error>(std::future_errc::no_state);
+    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_future_state_error>();
     }
     state_.set_value(std::move(value));
   }
 
-  using base_type_::set_exception;
+  using mixin_type_::set_exception;
 }; // class basic_promise
 
-template<typename R, typename ExecutionContext>
-class basic_promise<R &, ExecutionContext>
-  : private detail_::promise_base_<R &, ExecutionContext>
+template<typename R, typename Executor>
+class basic_promise<R &, Executor>
+  : private detail_::promise_mixin_<R &, Executor>
 {
+public:
+  using executor_type = Executor;
+  static_assert(corio::is_executor_v<executor_type>);
+
 private:
-  using base_type_ = detail_::promise_base_<R &, ExecutionContext>;
-  using base_type_::state_;
+  using mixin_type_ = detail_::promise_mixin_<R &, executor_type>;
+  using mixin_type_::state_;
 
 public:
-  using typename base_type_::context_type;
+  using typename mixin_type_::future_type;
 
-  explicit basic_promise(context_type &ctx)
-    : base_type_(ctx)
+  basic_promise() = default;
+
+  explicit basic_promise(executor_type const &executor)
+    : basic_promise(executor_type(executor))
+  {}
+
+  explicit basic_promise(executor_type &&executor)
+    : mixin_type_(std::move(executor))
+  {}
+
+  template<typename ExecutionContext>
+  explicit basic_promise(
+    ExecutionContext &ctx,
+    corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
+    corio::disable_if_executor_t<ExecutionContext> * = nullptr)
+    : basic_promise(ctx.get_executor())
   {}
 
   void swap(basic_promise &rhs) noexcept
   {
-    base_type_::swap(rhs);
+    mixin_type_::swap(rhs);
   }
 
   friend void swap(basic_promise &lhs, basic_promise &rhs)
@@ -180,40 +258,64 @@ public:
     lhs.swap(rhs);
   }
 
-  using base_type_::get_future;
+  using mixin_type_::has_executor;
+
+  using mixin_type_::set_executor;
+
+  using mixin_type_::get_executor;
+
+  using mixin_type_::get_future;
 
   void set_value(R &value)
   {
-    if (state_.ready()) {
-      CORIO_THROW<std::future_error>(std::future_errc::promise_already_satisfied);
+    if (BOOST_UNLIKELY(state_.ready())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::promise_already_satisfied_error>();
     }
-    if (!state_.valid()) {
-      CORIO_THROW<std::future_error>(std::future_errc::no_state);
+    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_future_state_error>();
     }
     state_.set_value(value);
   }
 
-  using base_type_::set_exception;
-}; // class basic_promise<R &, ExecutionContext>
+  using mixin_type_::set_exception;
+}; // class basic_promise<R &, Executor>
 
-template<typename ExecutionContext>
-class basic_promise<void, ExecutionContext>
-  : private detail_::promise_base_<void, ExecutionContext>
+template<typename Executor>
+class basic_promise<void, Executor>
+  : private detail_::promise_mixin_<void, Executor>
 {
+public:
+  using executor_type = Executor;
+  static_assert(corio::is_executor_v<executor_type>);
+
 private:
-  using base_type_ = detail_::promise_base_<void, ExecutionContext>;
-  using base_type_::state_;
+  using mixin_type_ = detail_::promise_mixin_<void, executor_type>;
+  using mixin_type_::state_;
 
 public:
-  using typename base_type_::context_type;
+  using typename mixin_type_::future_type;
 
-  explicit basic_promise(context_type &ctx)
-    : base_type_(ctx)
+  basic_promise() = default;
+
+  explicit basic_promise(executor_type const &executor)
+    : basic_promise(executor_type(executor))
+  {}
+
+  explicit basic_promise(executor_type &&executor)
+    : mixin_type_(std::move(executor))
+  {}
+
+  template<typename ExecutionContext>
+  explicit basic_promise(
+    ExecutionContext &ctx,
+    corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
+    corio::disable_if_executor_t<ExecutionContext> * = nullptr)
+    : basic_promise(ctx.get_executor())
   {}
 
   void swap(basic_promise &rhs) noexcept
   {
-    base_type_::swap(rhs);
+    mixin_type_::swap(rhs);
   }
 
   friend void swap(basic_promise &lhs, basic_promise &rhs) noexcept
@@ -221,21 +323,30 @@ public:
     lhs.swap(rhs);
   }
 
-  using base_type_::get_future;
+  using mixin_type_::has_executor;
+
+  using mixin_type_::set_executor;
+
+  using mixin_type_::get_executor;
+
+  using mixin_type_::get_future;
 
   void set_value()
   {
-    if (state_.ready()) {
-      CORIO_THROW<std::future_error>(std::future_errc::promise_already_satisfied);
+    if (BOOST_UNLIKELY(state_.ready())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::promise_already_satisfied_error>();
     }
-    if (!state_.valid()) {
-      CORIO_THROW<std::future_error>(std::future_errc::no_state);
+    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_future_state_error>();
     }
     state_.set_value();
   }
 
-  using base_type_::set_exception;
-}; // class basic_promise<void, ExecutionContext>
+  using mixin_type_::set_exception;
+}; // class basic_promise<void, Executor>
+
+template<typename R>
+using promise = basic_promise<R, boost::asio::executor>;
 
 } // namespace corio::thread_unsafe
 

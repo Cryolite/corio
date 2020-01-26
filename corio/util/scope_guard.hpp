@@ -35,13 +35,11 @@ struct scope_guard_arg_t_
   {
     return scope_guard_<F>(std::move(f));
   }
-};
+}; // struct scope_guard_arg_t_
 
 constexpr scope_guard_arg_t_ scope_guard_arg_;
 
 } // namespace corio::detail_
-
-#define CORIO_SCOPE_GUARD_PP_CAT_(X, Y) X ## Y
 
 #define CORIO_SCOPE_GUARD \
 [[maybe_unused]] auto const &BOOST_PP_CAT(corio_scope_guard_, __LINE__) \
