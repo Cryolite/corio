@@ -198,14 +198,14 @@ public:
   template<typename CompletionToken>
   auto async_lock(CompletionToken &&token)
   {
-    if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_executor_error>();
-    }
     using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(lock_type)>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type completion_handler(std::forward<CompletionToken>(token));
     async_result_type async_result(completion_handler);
     if (!locked_) {
+      if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
+        CORIO_THROW<corio::no_executor_error>();
+      }
       locked_ = true;
       CORIO_EXCEPTION_GUARD(eg){
         locked_ = false;

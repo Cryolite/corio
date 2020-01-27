@@ -131,6 +131,9 @@ class basic_future
   : private detail_::future_mixin_<R, Executor>
 {
 public:
+  static_assert(!std::is_const_v<R>);
+  static_assert(!std::is_volatile_v<R>);
+  static_assert(!std::is_rvalue_reference_v<R>);
   using executor_type = Executor;
   static_assert(corio::is_executor_v<executor_type>);
 

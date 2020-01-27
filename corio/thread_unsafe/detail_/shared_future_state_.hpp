@@ -93,6 +93,7 @@ private:
     {
       CORIO_ASSERT(!ready());
       CORIO_ASSERT(!mtx_.try_lock());
+      static_assert(sizeof...(Args) <= 1u);
       value_.emplace(std::forward<Args>(args)...);
       mtx_.unlock();
     }
@@ -109,11 +110,13 @@ private:
     void async_get(CompletionHandler &&h)
     {
       CORIO_ASSERT(refcount_ > 0u);
-      // The only caller of this function, `shared_future_state_::async_get`,
-      // guarantees that `h` has ownership of the object pointed by `this`.
-      // Thus, use of a reference to the member variable `value_` is safe as
-      // long as `h_` (a moved-to destination of `h`, to which ownership of the
-      // object pointed by `this` is transferred) lives.
+      // A NOTE ON THE LIFETIME OF `value_`. Since `value_` is captured by
+      // reference, someone must guarantee that the object pointed to by `this`
+      // lives until the following callback is invoked. This condition is
+      // always satisfied because, only `basic_promise::set_value` or
+      // `basic_promise::set_exception` invokes the callback and the object of
+      // the type `basic_promise` shares the ownership of the object pointed to
+      // by `this`.
       mtx_.async_lock(
         [h_ = std::move(h), &value = value_](lock_type_ lock) mutable -> void{
           lock = lock_type_();
@@ -237,6 +240,7 @@ public:
   void set_value(Args &&... args)
   {
     CORIO_ASSERT(p_ != nullptr);
+    static_assert(sizeof...(Args) <= 1u);
     p_->set_value(std::forward<Args>(args)...);
   }
 
@@ -250,12 +254,8 @@ public:
   void async_get(CompletionHandler &&h)
   {
     CORIO_ASSERT(p_ != nullptr);
-    // Intentional copy of `*this` to the lambda capture increments the
-    // reference count of the object referred to by `p_`. This guarantees that
-    // the object referred to by `p_` lives as long as the closure object
-    // lives.
     p_->async_get(
-      [self = *this, h_ = std::move(h)](corio::expected<R> value) mutable -> void{
+      [h_ = std::move(h)](corio::expected<R> value) mutable -> void{
         std::move(h_)(std::move(value));
       });
   }
@@ -265,7 +265,7 @@ public:
   {
     CORIO_ASSERT(p_ != nullptr);
     p_->async_wait(
-      [self = *this, h_ = std::move(h)]() mutable -> void{
+      [h_ = std::move(h)]() mutable -> void{
         std::move(h_)();
       });
   }
