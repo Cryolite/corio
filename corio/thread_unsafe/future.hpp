@@ -33,12 +33,12 @@ protected:
   static_assert(corio::is_executor_v<executor_type>);
   using state_type_ = corio::thread_unsafe::detail_::shared_future_state_<R, executor_type>;
 
-  explicit future_mixin_(state_type_ const &state) noexcept
-    : state_(state)
+  future_mixin_() noexcept
+    : state_()
   {}
 
-  future_mixin_() noexcept
-    : state_(nullptr)
+  explicit future_mixin_(state_type_ const &state) noexcept
+    : state_(state)
   {}
 
   future_mixin_(future_mixin_ const &) = delete;
@@ -59,27 +59,6 @@ protected:
   {
     future_mixin_(std::move(rhs)).swap(*this);
     return *this;
-  }
-
-  bool has_executor() const
-  {
-    if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
-    }
-    return state_.has_executor();
-  }
-
-  void set_executor(executor_type const &executor)
-  {
-    set_executor(executor_type(executor));
-  }
-
-  void set_executor(executor_type &&executor)
-  {
-    if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
-    }
-    state_.set_executor(std::move(executor));
   }
 
   executor_type get_executor() const
@@ -161,10 +140,6 @@ public:
     lhs.swap(rhs);
   }
 
-  using mixin_type_::has_executor;
-
-  using mixin_type_::set_executor;
-
   using mixin_type_::get_executor;
 
   using mixin_type_::valid;
@@ -228,10 +203,6 @@ public:
     lhs.swap(rhs);
   }
 
-  using mixin_type_::has_executor;
-
-  using mixin_type_::set_executor;
-
   using mixin_type_::get_executor;
 
   using mixin_type_::valid;
@@ -294,10 +265,6 @@ public:
   {
     lhs.swap(rhs);
   }
-
-  using mixin_type_::has_executor;
-
-  using mixin_type_::set_executor;
 
   using mixin_type_::get_executor;
 

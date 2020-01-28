@@ -38,6 +38,7 @@ private:
       cleanup_canceller_()
   {
     p_->acquire();
+    promise.reserve_cleanup_canceller(cleanup_canceller_);
   }
 
 public:
@@ -57,9 +58,8 @@ public:
 
   ~basic_coroutine()
   {
-    CORIO_ASSERT(p_ != nullptr || cleanup_canceller_.size() == 0u);
+    CORIO_ASSERT((p_ != nullptr) == (cleanup_canceller_.size() == 1u));
     CORIO_ASSERT(cleanup_canceller_.size() == 0u || cleanup_canceller_.size() == 1u);
-    CORIO_ASSERT(p_ == nullptr || has_executor() == (cleanup_canceller_.size() == 1u));
     if (p_ != nullptr && p_->release() == 0u) {
       if (done() || (cleanup_canceller_.size() == 0u && !p_->registered_for_cleanup())) {
         if (p_->registered_for_cleanup()) {
@@ -92,28 +92,6 @@ public:
   {
     basic_coroutine(std::move(rhs)).swap(*this);
     return *this;
-  }
-
-  bool has_executor() const
-  {
-    if (BOOST_UNLIKELY(p_ == nullptr)) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::invalid_coroutine_error>();
-    }
-    return p_->has_executor();
-  }
-
-  void set_executor(executor_type const &executor)
-  {
-    set_executor(executor_type(executor));
-  }
-
-  void set_executor(executor_type &&executor)
-  {
-    if (BOOST_UNLIKELY(p_ == nullptr)) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::invalid_coroutine_error>();
-    }
-    CORIO_ASSERT(cleanup_canceller_.empty());
-    p_->set_executor(std::move(executor), cleanup_canceller_);
   }
 
   executor_type get_executor() const

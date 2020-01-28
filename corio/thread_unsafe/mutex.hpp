@@ -4,19 +4,16 @@
 #include <corio/core/enable_if_executor.hpp>
 #include <corio/core/is_executor.hpp>
 #include <corio/core/enable_if_execution_context.hpp>
-#include <corio/core/error.hpp>
+#include <corio/util/enable_if_constructible.hpp>
 #include <corio/util/exception_guard.hpp>
-#include <corio/util/throw.hpp>
 #include <corio/util/assert.hpp>
 #include <boost/asio/defer.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/executor.hpp>
 #include <boost/asio/async_result.hpp>
-#include <boost/config.hpp>
 #include <mutex>
 #include <deque>
 #include <type_traits>
-#include <optional>
 #include <utility>
 
 
@@ -141,12 +138,6 @@ private:
   using handler_queue_type_ = std::deque<detail_::mutex_completion_handler_>;
 
 public:
-  basic_mutex()
-    : executor_(),
-      handler_queue_(),
-      locked_()
-  {}
-
   explicit basic_mutex(executor_type const &executor)
     : basic_mutex(executor_type(executor))
   {}
@@ -161,7 +152,8 @@ public:
   explicit basic_mutex(
     ExecutionContext &ctx,
     corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
-    corio::disable_if_executor<ExecutionContext> * = nullptr)
+    corio::disable_if_executor_t<ExecutionContext> * = nullptr,
+    corio::enable_if_constructible_t<executor_type, typename ExecutionContext::executor_type> * = nullptr)
     : basic_mutex(ctx.get_executor())
   {}
 
@@ -169,30 +161,9 @@ public:
 
   basic_mutex &operator=(basic_mutex const &) = delete;
 
-  bool has_executor() const noexcept
-  {
-    return executor_.has_value();
-  }
-
-  void set_executor(executor_type const &executor)
-  {
-    set_executor(executor_type(executor));
-  }
-
-  void set_executor(executor_type &&executor)
-  {
-    if (BOOST_UNLIKELY(executor_.has_value())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::executor_already_assigned_error>();
-    }
-    executor_.emplace(std::move(executor));
-  }
-
   executor_type get_executor() const
   {
-    if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_executor_error>();
-    }
-    return executor_.value();
+    return executor_;
   }
 
   template<typename CompletionToken>
@@ -203,9 +174,6 @@ public:
     completion_handler_type completion_handler(std::forward<CompletionToken>(token));
     async_result_type async_result(completion_handler);
     if (!locked_) {
-      if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
-        CORIO_THROW<corio::no_executor_error>();
-      }
       locked_ = true;
       CORIO_EXCEPTION_GUARD(eg){
         locked_ = false;
@@ -213,7 +181,7 @@ public:
       detail_::mutex_completion_handler_ h(std::move(completion_handler), std::type_identity<executor_type>());
       h.adopt_lock(this);
       eg.dismiss();
-      boost::asio::defer(executor_.value(), std::move(h));
+      boost::asio::defer(executor_, std::move(h));
     }
     else {
       detail_::mutex_completion_handler_ h(std::move(completion_handler), std::type_identity<executor_type>());
@@ -232,9 +200,6 @@ public:
     CORIO_ASSERT(locked_);
     locked_ = false;
     if (!handler_queue_.empty()) {
-      if (BOOST_UNLIKELY(!executor_.has_value())) /*[[unlikely]]*/ {
-        CORIO_THROW<corio::no_executor_error>();
-      }
       locked_ = true;
       CORIO_EXCEPTION_GUARD(eg){
         locked_ = false;
@@ -247,12 +212,12 @@ public:
       // Otherwise, because `h` already owns the lock, `basic_mutex::unlock` is
       // called again from the `h`'s destructor during stack unwinding, which
       // may in turn evaluates the following line again...
-      boost::asio::post(executor_.value(), std::move(h));
+      boost::asio::post(executor_, std::move(h));
     }
   }
 
 private:
-  std::optional<executor_type> executor_;
+  executor_type executor_;
   handler_queue_type_ handler_queue_;
   bool locked_;
 }; // class basic_mutex

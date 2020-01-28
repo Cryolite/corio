@@ -303,7 +303,7 @@ TEST(mutex_te_dca, construct)
   using context_type = boost::asio::io_context;
   context_type ctx;
   using mutex = corio::mutex;
-  mutex mtx;
+  mutex mtx(ctx);
 
   boost::asio::io_context::count_type count = ctx.run();
   EXPECT_EQ(count, 0u);
@@ -315,9 +315,7 @@ TEST(mutex_te_dca, lock_then_unlock)
   using context_type = boost::asio::io_context;
   context_type ctx;
   using mutex = corio::mutex;
-  mutex mtx;
-
-  mtx.set_executor(ctx.get_executor());
+  mutex mtx(ctx);
 
   mutex::lock_type lock;
   int i = 0;
@@ -353,9 +351,7 @@ TEST(mutex_te_dca, lock_then_lock)
   using context_type = boost::asio::io_context;
   context_type ctx;
   using mutex = corio::mutex;
-  mutex mtx;
-
-  mtx.set_executor(ctx.get_executor());
+  mutex mtx(ctx);
 
   mutex::lock_type lock;
   int i = 0;
@@ -427,9 +423,7 @@ TEST(mutex_te_dca, lock_then_try_lock)
   using context_type = boost::asio::io_context;
   context_type ctx;
   using mutex = corio::mutex;
-  mutex mtx;
-
-  mtx.set_executor(ctx.get_executor());
+  mutex mtx(ctx);
 
   mutex::lock_type lock;
   int i = 0;
@@ -479,9 +473,7 @@ TEST(mutex_te_dca, try_lock)
   using context_type = boost::asio::io_context;
   context_type ctx;
   using mutex = corio::mutex;
-  mutex mtx;
-
-  mtx.set_executor(ctx.get_executor());
+  mutex mtx(ctx);
 
   EXPECT_TRUE(mtx.try_lock());
 
@@ -505,9 +497,7 @@ TEST(mutex_te_dca, try_lock_then_lock)
   using context_type = boost::asio::io_context;
   context_type ctx;
   using mutex = corio::mutex;
-  mutex mtx;
-
-  mtx.set_executor(ctx.get_executor());
+  mutex mtx(ctx);
 
   EXPECT_TRUE(mtx.try_lock());
 
@@ -564,9 +554,7 @@ TEST(mutex_te_dca, try_lock_then_try_lock)
   using context_type = boost::asio::io_context;
   context_type ctx;
   using mutex = corio::mutex;
-  mutex mtx;
-
-  mtx.set_executor(ctx.get_executor());
+  mutex mtx(ctx);
 
   EXPECT_TRUE(mtx.try_lock());
 

@@ -12,8 +12,10 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/async_result.hpp>
 #include <boost/asio/executor.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/config.hpp>
 #include <condition_variable>
+#include <chrono>
 #include <list>
 #include <type_traits>
 #include <functional>

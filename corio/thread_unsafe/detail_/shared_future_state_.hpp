@@ -33,18 +33,10 @@ private:
     using lock_type_ = typename mutex_type_::lock_type;
 
   public:
-    impl_()
-      : mtx_(),
-        value_(),
-        refcount_(0u)
-    {
-      mtx_.try_lock();
-    }
-
     explicit impl_(executor_type &&executor)
       : mtx_(std::move(executor)),
         value_(),
-        refcount_(0u)
+        refcount_()
     {
       mtx_.try_lock();
     }
@@ -62,18 +54,6 @@ private:
     {
       CORIO_ASSERT(refcount_ > 0u);
       return --refcount_;
-    }
-
-    bool has_executor() const noexcept
-    {
-      CORIO_ASSERT(refcount_ > 0u);
-      return mtx_.has_executor();
-    }
-
-    void set_executor(executor_type &&executor)
-    {
-      CORIO_ASSERT(refcount_ > 0u);
-      mtx_.set_executor(std::move(executor));
     }
 
     executor_type get_executor() const
@@ -137,24 +117,18 @@ private:
 
     R get()
     {
-      CORIO_ASSERT(refcount_ > 0u);
+      CORIO_ASSERT(ready());
       return corio::get(value_);
     }
 
   private:
     mutex_type_ mtx_;
-    expected<R> value_;
+    corio::expected<R> value_;
     std::size_t refcount_;
   }; // class impl_
 
 public:
-  shared_future_state_()
-    : p_(new impl_())
-  {
-    p_->acquire();
-  }
-
-  explicit shared_future_state_(std::nullptr_t) noexcept
+  shared_future_state_() noexcept
     : p_()
   {}
 
@@ -206,18 +180,6 @@ public:
   {
     shared_future_state_(std::move(rhs)).swap(*this);
     return *this;
-  }
-
-  bool has_executor() const
-  {
-    CORIO_ASSERT(p_ != nullptr);
-    return p_->has_executor();
-  }
-
-  void set_executor(executor_type &&executor)
-  {
-    CORIO_ASSERT(p_ != nullptr);
-    p_->set_executor(std::move(executor));
   }
 
   executor_type get_executor() const

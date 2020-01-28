@@ -58,7 +58,7 @@ public:
   {
     static_cast<derived_type_ *>(this)->promise_.set_value(std::forward<T>(value));
   }
-}; // class coroutine_promise_return_mixin_<corio::thread_unsafe<R, Executor> >
+}; // class coroutine_promise_return_mixin_<corio::thread_unsafe::coroutine_promise<R, Executor> >
 
 template<typename Executor>
 class coroutine_promise_return_mixin_<corio::thread_unsafe::coroutine_promise<void, Executor> >
@@ -71,7 +71,7 @@ public:
   {
     static_cast<derived_type_ *>(this)->promise_.set_value();
   }
-}; // class coroutine_promise_return_mixin_<corio::thread_unsafe<void, Executor> >
+}; // class coroutine_promise_return_mixin_<corio::thread_unsafe::coroutine_promise<void, Executor> >
 
 } // namespace detail_
 
@@ -99,12 +99,30 @@ private:
 public:
   using coroutine_type = corio::thread_unsafe::basic_coroutine<R, executor_type>;
 
-  coroutine_promise()
+  template<typename... Args>
+  explicit coroutine_promise(executor_type const &executor, Args &&...)
+    : coroutine_promise(executor_type(executor))
+  {}
+
+  template<typename... Args>
+  explicit coroutine_promise(executor_type &&executor, Args &&...)
     : handle_(handle_type::from_promise(*this)),
-      promise_(),
+      promise_(std::move(executor)),
       cleanup_canceller_(),
       refcount_()
   {}
+
+#if 0
+  // Clang does not seem to use SFINAE to select overloads.
+  template<typename ExecutionContext, typename... Args>
+  coroutine_promise(
+    ExecutionContext &context, Args &&...,
+    corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
+    corio::disable_if_executor_t<ExecutionContext> * = nullptr,
+    corio::enable_if_constructible_t<executor_type, typename ExecutionContext::executor_type> * = nullptr)
+    : coroutine_promise(context.get_executor())
+  {}
+#endif
 
   coroutine_promise(coroutine_promise const &) = delete;
 
@@ -121,40 +139,14 @@ public:
     return --refcount_;
   }
 
-  bool has_executor() const
-  {
-    CORIO_ASSERT(promise_.has_executor() || !cleanup_canceller_.valid());
-    return promise_.has_executor();
-  }
-
   executor_type get_executor() const
   {
-    CORIO_ASSERT(has_executor());
+    CORIO_ASSERT(refcount_ > 0u);
     return promise_.get_executor();
   }
 
-  void set_executor(executor_type const &executor)
+  void reserve_cleanup_canceller(cleanup_canceller_type &cleanup_canceller)
   {
-    CORIO_ASSERT(!has_executor());
-    set_executor_(executor_type(executor));
-  }
-
-  void set_executor(executor_type const &executor, cleanup_canceller_type &cleanup_canceller)
-  {
-    CORIO_ASSERT(!has_executor());
-    set_executor_(executor_type(executor), cleanup_canceller);
-  }
-
-  void set_executor(executor_type &&executor)
-  {
-    CORIO_ASSERT(!has_executor());
-    promise_.set_executor(std::move(executor));
-  }
-
-  void set_executor(executor_type &&executor, cleanup_canceller_type &cleanup_canceller)
-  {
-    CORIO_ASSERT(!has_executor());
-    promise_.set_executor(std::move(executor));
     executor_type exec = promise_.get_executor();
     auto &ctx = exec.context();
     cleanup_service_type_ &service = boost::asio::has_service<cleanup_service_type_>(ctx)
@@ -165,7 +157,6 @@ public:
 
   void register_for_cleanup(cleanup_canceller_type &cleanup_canceller) noexcept
   {
-    CORIO_ASSERT(has_executor());
     CORIO_ASSERT(cleanup_canceller.size() == 1u);
     executor_type exec = promise_.get_executor();
     auto &ctx = exec.context();
@@ -212,10 +203,6 @@ public:
 
   [[nodiscard]] auto await_transform(this_executor_t)
   {
-    if (BOOST_UNLIKELY(!has_executor())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_executor_error>();
-    }
-
     class [[nodiscard]] awaiter
     {
     public:
@@ -248,33 +235,13 @@ public:
   }
 
   template<typename T>
-  std::remove_cv_t<T> await_transform(T &&awaitable)
+  std::decay_t<T> await_transform(T &&awaitable)
   {
     using type = std::decay_t<T>;
     if constexpr (detail_::can_have_executor<type>(0)) {
-      if (has_executor()) {
-        if (awaitable.has_executor()) {
-          if (BOOST_UNLIKELY(get_executor() != awaitable.get_executor())) /*[[unlikely]]*/ {
-            CORIO_THROW<corio::bad_executor_error>();
-          }
-          return std::forward<T>(awaitable);
-        }
-        executor_type executor = get_executor();
-        awaitable.set_executor(std::move(executor));
-        return std::forward<T>(awaitable);
+      if (BOOST_UNLIKELY(get_executor() != awaitable.get_executor())) /*[[unlikely]]*/ {
+        CORIO_THROW<corio::bad_executor_error>();
       }
-
-      if (BOOST_UNLIKELY(!awaitable.has_executor())) /*[[unlikely]]*/ {
-        CORIO_THROW<corio::no_executor_error>();
-      }
-
-      executor_type executor = awaitable.get_executor();
-      set_executor(std::move(executor));
-      return std::forward<T>(awaitable);
-    }
-
-    if (BOOST_UNLIKELY(!has_executor())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_executor_error>();
     }
     return std::forward<T>(awaitable);
   }
