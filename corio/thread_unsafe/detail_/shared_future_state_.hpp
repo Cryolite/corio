@@ -6,6 +6,8 @@
 #include <corio/util/expected.hpp>
 #include <corio/util/assert.hpp>
 #include <future>
+#include <condition_variable>
+#include <chrono>
 #include <type_traits>
 #include <utility>
 #include <exception>

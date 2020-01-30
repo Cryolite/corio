@@ -2,6 +2,9 @@
 #define CORIO_THREAD_UNSAFE_RESUME_HPP_INCLUDE_GUARD
 
 #include <corio/thread_unsafe/promise.hpp>
+#include <corio/core/enable_if_executor.hpp>
+#include <corio/core/is_executor.hpp>
+#include <corio/core/enable_if_execution_context.hpp>
 #include <boost/asio/async_result.hpp>
 #include <boost/system/system_error.hpp>
 #include <boost/system/error_code.hpp>
@@ -51,6 +54,16 @@ struct resume_t
 {
   template<typename Executor>
   detail_::resume_token_<Executor, std::false_type> operator()(
+    Executor const &executor,
+    corio::disable_if_execution_context_t<std::decay_t<Executor> > * = nullptr,
+    corio::enable_if_executor_t<std::decay_t<Executor> > * = nullptr) const
+  {
+    using executor_type = std::decay_t<Executor>;
+    return (*this)(executor_type(executor));
+  }
+
+  template<typename Executor>
+  detail_::resume_token_<Executor, std::false_type> operator()(
     Executor &&executor,
     corio::disable_if_execution_context_t<std::decay_t<Executor> > * = nullptr,
     corio::enable_if_executor_t<std::decay_t<Executor> > * = nullptr) const
@@ -77,6 +90,16 @@ inline constexpr resume_t resume{};
 
 struct nothrow_resume_t
 {
+  template<typename Executor>
+  detail_::resume_token_<Executor, std::true_type> operator()(
+    Executor const &executor,
+    corio::disable_if_execution_context_t<std::decay_t<Executor> > * = nullptr,
+    corio::enable_if_executor_t<std::decay_t<Executor> > * = nullptr)
+  {
+    using executor_type = std::decay_t<Executor>;
+    return (*this)(executor_type(executor));
+  }
+
   template<typename Executor>
   detail_::resume_token_<Executor, std::true_type> operator()(
     Executor &&executor,

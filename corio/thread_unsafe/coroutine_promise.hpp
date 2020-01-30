@@ -2,7 +2,6 @@
 #define CORIO_THREAD_UNSAFE_COROUTINE_PROMISE_HPP_INCLUDE_GUARD
 
 #include <corio/thread_unsafe/coroutine.hpp>
-#include <corio/thread_unsafe/future.hpp>
 #include <corio/thread_unsafe/promise.hpp>
 #include <corio/thread_unsafe/coroutine_cleanup_service.hpp>
 #include <corio/core/is_executor.hpp>
@@ -85,16 +84,12 @@ public:
 
 private:
   using this_type_ = coroutine_promise<R, executor_type>;
-  friend class detail_::coroutine_promise_return_mixin_<coroutine_promise<R, Executor> >;
-
-public:
-  using cleanup_canceller_type = std::list<corio::thread_unsafe::coroutine_cleanup_canceller>;
-  using handle_type = std::experimental::coroutine_handle<this_type_>;
-
-private:
+  friend class detail_::coroutine_promise_return_mixin_<this_type_>;
+  using handle_type_ = std::experimental::coroutine_handle<this_type_>;
   using promise_type_ = corio::thread_unsafe::basic_promise<R, executor_type>;
   using cleanup_service_type_ = corio::thread_unsafe::coroutine_cleanup_service;
-  using future_type_ = corio::thread_unsafe::basic_future<R, executor_type>;
+  using cleanup_canceller_type_ = corio::thread_unsafe::coroutine_cleanup_canceller;
+  using cleanup_canceller_list_type_ = std::list<cleanup_canceller_type_>;
 
 public:
   using coroutine_type = corio::thread_unsafe::basic_coroutine<R, executor_type>;
@@ -106,11 +101,19 @@ public:
 
   template<typename... Args>
   explicit coroutine_promise(executor_type &&executor, Args &&...)
-    : handle_(handle_type::from_promise(*this)),
+    : handle_(handle_type_::from_promise(*this)),
       promise_(std::move(executor)),
+      reserved_cleanup_canceller_(),
       cleanup_canceller_(),
       refcount_()
-  {}
+  {
+    executor_type exec = promise_.get_executor();
+    auto &context = exec.context();
+    cleanup_service_type_ &service = boost::asio::has_service<cleanup_service_type_>(context)
+      ? boost::asio::use_service<cleanup_service_type_>(context)
+      : boost::asio::make_service<cleanup_service_type_>(context);
+    service.reserve(reserved_cleanup_canceller_);
+  }
 
 #if 0
   // Clang does not seem to use SFINAE to select overloads.
@@ -139,45 +142,24 @@ public:
     return --refcount_;
   }
 
+  void transfer_ownership() noexcept
+  {
+    CORIO_ASSERT(refcount_ == 0u);
+    executor_type executor = promise_.get_executor();
+    auto &context = executor.context();
+    CORIO_ASSERT(boost::asio::has_service<cleanup_service_type_>(context));
+    cleanup_service_type_ &service = boost::asio::use_service<cleanup_service_type_>(context);
+    cleanup_canceller_ = service.register_for_cleanup(handle_, reserved_cleanup_canceller_);
+  }
+
   executor_type get_executor() const
   {
-    CORIO_ASSERT(refcount_ > 0u);
     return promise_.get_executor();
-  }
-
-  void reserve_cleanup_canceller(cleanup_canceller_type &cleanup_canceller)
-  {
-    executor_type exec = promise_.get_executor();
-    auto &ctx = exec.context();
-    cleanup_service_type_ &service = boost::asio::has_service<cleanup_service_type_>(ctx)
-      ? boost::asio::use_service<cleanup_service_type_>(ctx)
-      : boost::asio::make_service<cleanup_service_type_>(ctx);
-    service.reserve(cleanup_canceller);
-  }
-
-  void register_for_cleanup(cleanup_canceller_type &cleanup_canceller) noexcept
-  {
-    CORIO_ASSERT(cleanup_canceller.size() == 1u);
-    executor_type exec = promise_.get_executor();
-    auto &ctx = exec.context();
-    CORIO_ASSERT(boost::asio::has_service<cleanup_service_type_>(ctx));
-    cleanup_service_type_ &service = boost::asio::use_service<cleanup_service_type_>(ctx);
-    cleanup_canceller_ = service.register_for_cleanup(handle_, cleanup_canceller);
-  }
-
-  bool registered_for_cleanup() noexcept
-  {
-    return cleanup_canceller_.valid();
-  }
-
-  void cancel_cleanup() noexcept
-  {
-    CORIO_ASSERT(cleanup_canceller_.valid());
-    cleanup_canceller_.execute();
   }
 
   void resume()
   {
+    CORIO_ASSERT(refcount_ > 0u);
     handle_.resume();
   }
 
@@ -186,18 +168,21 @@ public:
     return handle_.done();
   }
 
-  handle_type get_handle() const noexcept
+  void destroy() noexcept
   {
-    return handle_;
+    CORIO_ASSERT(refcount_ == 0u);
+    handle_.destroy();
   }
 
   coroutine_type get_return_object()
   {
+    CORIO_ASSERT(refcount_ == 0u);
     return coroutine_type(*this);
   }
 
   std::experimental::suspend_always initial_suspend() noexcept
   {
+    CORIO_ASSERT(refcount_ > 0u);
     return {};
   }
 
@@ -219,7 +204,7 @@ public:
         return true;
       }
 
-      void await_suspend(handle_type const &)
+      void await_suspend(handle_type_ const &)
       {}
 
       executor_type await_resume()
@@ -256,6 +241,7 @@ public:
   auto final_suspend() noexcept
   {
     if (cleanup_canceller_.valid()) {
+      CORIO_ASSERT(refcount_ == 0u);
       cleanup_canceller_.execute();
     }
 
@@ -275,7 +261,7 @@ public:
         return ready_;
       }
 
-      void await_suspend(handle_type const &) const noexcept
+      void await_suspend(handle_type_ const &) const noexcept
       {}
 
       void await_resume() const noexcept
@@ -289,9 +275,10 @@ public:
   }
 
 protected:
-  handle_type handle_;
+  handle_type_ handle_;
   promise_type_ promise_;
-  corio::thread_unsafe::coroutine_cleanup_canceller cleanup_canceller_;
+  cleanup_canceller_list_type_ reserved_cleanup_canceller_;
+  cleanup_canceller_type_ cleanup_canceller_;
   std::size_t refcount_;
 }; // class coroutine_promise
 
