@@ -124,7 +124,6 @@ add_executable(corio_test
   test/util/index_pack.cpp
   test/util/throw.cpp
   test/thread_unsafe/condition_variable.cpp
-  test/thread_unsafe/mutex.cpp
   test/thread_unsafe/promise.cpp
   test/thread_unsafe/future.cpp
   test/thread_unsafe/coroutine.cpp)
