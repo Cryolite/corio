@@ -7,6 +7,7 @@
 #include <corio/core/is_executor.hpp>
 #include <corio/core/enable_if_execution_context.hpp>
 #include <corio/core/error.hpp>
+#include <corio/util/enable_if_constructible.hpp>
 #include <corio/util/throw.hpp>
 #include <boost/asio/executor.hpp>
 #include <boost/config.hpp>
@@ -37,11 +38,6 @@ private:
 protected:
   using future_type = corio::thread_unsafe::basic_future<R, executor_type>;
 
-  promise_mixin_()
-    : state_(),
-      future_already_retrieved_()
-  {}
-
   explicit promise_mixin_(executor_type &&executor)
     : state_(std::move(executor)),
       future_already_retrieved_()
@@ -58,7 +54,7 @@ protected:
 
   ~promise_mixin_()
   {
-    if (future_already_retrieved_ && has_executor() && !state_.ready()) {
+    if (future_already_retrieved_ && !state_.ready()) {
       std::exception_ptr p = std::make_exception_ptr(corio::broken_promise_error());
       state_.set_exception(std::move(p));
     }
@@ -77,27 +73,6 @@ protected:
   {
     promise_mixin_(std::move(rhs)).swap(*this);
     return *this;
-  }
-
-  bool has_executor() const
-  {
-    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
-    }
-    return state_.has_executor();
-  }
-
-  void set_executor(executor_type const &executor)
-  {
-    set_executor(executor_type(executor));
-  }
-
-  void set_executor(executor_type &&executor)
-  {
-    if (BOOST_UNLIKELY(!state_.valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
-    }
-    state_.set_executor(std::move(executor));
   }
 
   executor_type get_executor() const
@@ -144,6 +119,9 @@ class basic_promise
   : private detail_::promise_mixin_<R, Executor>
 {
 public:
+  static_assert(!std::is_const_v<R>);
+  static_assert(!std::is_volatile_v<R>);
+  static_assert(!std::is_rvalue_reference_v<R>);
   using executor_type = Executor;
   static_assert(corio::is_executor_v<executor_type>);
 
@@ -153,8 +131,6 @@ private:
 
 public:
   using typename mixin_type_::future_type;
-
-  basic_promise() = default;
 
   explicit basic_promise(executor_type const &executor)
     : basic_promise(executor_type(executor))
@@ -168,23 +144,17 @@ public:
   explicit basic_promise(
     ExecutionContext &ctx,
     corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
-    corio::disable_if_executor_t<ExecutionContext> * = nullptr)
+    corio::disable_if_executor_t<ExecutionContext> * = nullptr,
+    corio::enable_if_constructible_t<executor_type, typename ExecutionContext::executor_type> * = nullptr)
     : basic_promise(ctx.get_executor())
   {}
 
-  void swap(basic_promise &rhs) noexcept
-  {
-    mixin_type_::swap(rhs);
-  }
+  using mixin_type_::swap;
 
   friend void swap(basic_promise &lhs, basic_promise &rhs) noexcept
   {
     lhs.swap(rhs);
   }
-
-  using mixin_type_::has_executor;
-
-  using mixin_type_::set_executor;
 
   using mixin_type_::get_executor;
 
@@ -230,8 +200,6 @@ private:
 public:
   using typename mixin_type_::future_type;
 
-  basic_promise() = default;
-
   explicit basic_promise(executor_type const &executor)
     : basic_promise(executor_type(executor))
   {}
@@ -244,23 +212,17 @@ public:
   explicit basic_promise(
     ExecutionContext &ctx,
     corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
-    corio::disable_if_executor_t<ExecutionContext> * = nullptr)
+    corio::disable_if_executor_t<ExecutionContext> * = nullptr,
+    corio::enable_if_constructible_t<executor_type, typename ExecutionContext::executor_type> * = nullptr)
     : basic_promise(ctx.get_executor())
   {}
 
-  void swap(basic_promise &rhs) noexcept
-  {
-    mixin_type_::swap(rhs);
-  }
+  using mixin_type_::swap;
 
-  friend void swap(basic_promise &lhs, basic_promise &rhs)
+  friend void swap(basic_promise &lhs, basic_promise &rhs) noexcept
   {
     lhs.swap(rhs);
   }
-
-  using mixin_type_::has_executor;
-
-  using mixin_type_::set_executor;
 
   using mixin_type_::get_executor;
 
@@ -295,8 +257,6 @@ private:
 public:
   using typename mixin_type_::future_type;
 
-  basic_promise() = default;
-
   explicit basic_promise(executor_type const &executor)
     : basic_promise(executor_type(executor))
   {}
@@ -309,23 +269,17 @@ public:
   explicit basic_promise(
     ExecutionContext &ctx,
     corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
-    corio::disable_if_executor_t<ExecutionContext> * = nullptr)
+    corio::disable_if_executor_t<ExecutionContext> * = nullptr,
+    corio::enable_if_constructible_t<executor_type, typename ExecutionContext::executor_type> * = nullptr)
     : basic_promise(ctx.get_executor())
   {}
 
-  void swap(basic_promise &rhs) noexcept
-  {
-    mixin_type_::swap(rhs);
-  }
+  using mixin_type_::swap;
 
   friend void swap(basic_promise &lhs, basic_promise &rhs) noexcept
   {
     lhs.swap(rhs);
   }
-
-  using mixin_type_::has_executor;
-
-  using mixin_type_::set_executor;
 
   using mixin_type_::get_executor;
 

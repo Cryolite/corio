@@ -1,703 +1,276 @@
 #include <corio/thread_unsafe/promise.hpp>
 
 #include <corio/thread_unsafe/future.hpp>
+#include <corio/core/error.hpp>
 #include <gtest/gtest.h>
 #include <boost/asio/io_context.hpp>
+#include <utility>
+#include <stdexcept>
+#include <exception>
 
+
+// Fixture class names follow the convention
+// `promise(_value|_move|_ref|_void)(_[fvx]+)?`, where
+//
+//   - `promise_value_*` stands for tests on `promise<int>`,
+//   - `promise_move_*` stands for tests on `promise<std::unique_ptr<int> >`,
+//   - `promise_ref_*` stands for tests on `promise<int &>`,
+//   - `promise_void_*` stands for tests on `promise<void>`,
+//   - `f` suffix indicates that a future is already retrieved,
+//   - `v` suffix indicates that the promise has been already satisfied with a
+//     value, and
+//   - `x` suffix indicates that the promise has been already satisfied with an
+//     exception.
 
 namespace corio
 { using namespace thread_unsafe; }
 
-TEST(promise_value, constructor)
+namespace{
+
+class promise_value
+  : public ::testing::Test
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int, executor>;
-  promise prom(ctx);
+protected:
+  promise_value()
+    : context(),
+      promise(context)
+  {}
+
+  boost::asio::io_context context;
+  corio::promise<int> promise;
+}; // class promise_value
+
+} // namespace *unnamed*
+
+TEST_F(promise_value, get_executor)
+{
+  EXPECT_EQ(promise.get_executor(), context.get_executor());
 }
 
-TEST(promise_value, get_future)
+TEST_F(promise_value, get_future)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int, executor>;
-  promise prom(ctx);
-
-  using future = corio::basic_future<int, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
+  auto future = promise.get_future();
+  EXPECT_EQ(future.get_executor(), context.get_executor());
+  EXPECT_TRUE(future.valid());
 }
 
-TEST(promise_value, set_value_before_get_future)
+TEST_F(promise_value, set_value)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int, executor>;
-
-  promise prom(ctx);
-  prom.set_value(42);
-
-  using future = corio::basic_future<int, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  int i = 0;
-  fut.async_get([&i](auto v) -> void{ i = corio::get(v); });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 0);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 42);
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  promise.set_value(42);
 }
 
-TEST(promise_value, set_value_after_get_future_before_async_get)
+TEST_F(promise_value, set_exception)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int, executor>;
-
-  promise prom(ctx);
-
-  using future = corio::basic_future<int, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  prom.set_value(42);
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  int i = 0;
-  fut.async_get([&i](auto v) -> void{ i = corio::get(v); });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 0);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 42);
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  auto p = std::make_exception_ptr(std::runtime_error("Hello, world!"));
+  promise.set_exception(std::move(p));
 }
 
-TEST(promise_value, set_value_after_async_get)
+namespace{
+
+class promise_value_f
+  : public ::testing::Test
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int, executor>;
+protected:
+  promise_value_f()
+    : context(),
+      promise(context),
+      future(promise.get_future())
+  {}
 
-  promise prom(ctx);
+  boost::asio::io_context context;
+  corio::promise<int> promise;
+  corio::future<int> future;
+}; // class promise_value_f
 
-  using future = corio::basic_future<int, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
+} // namespace *unnamed*
 
-  int i = 0;
-  fut.async_get([&i](auto v) -> void{ i = corio::get(v); });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 0);
-  EXPECT_FALSE(ctx.stopped());
-
-  prom.set_value(42);
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 42);
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+TEST_F(promise_value_f, get_executor)
+{
+  EXPECT_EQ(promise.get_executor(), context.get_executor());
 }
 
-TEST(promise_value, set_exception_before_get_future)
+TEST_F(promise_value_f, get_future)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int, executor>;
-
-  promise prom(ctx);
-  prom.set_exception(std::make_exception_ptr(std::runtime_error("Hello, world!")));
-
-  using future = corio::basic_future<int, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  char const *p = nullptr;
-  fut.async_get(
-    [&p](auto v) -> void{
-      try {
-        corio::get(v);
-      }
-      catch(std::runtime_error const &e)
-      {
-        p = e.what();
-      }
-    });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_STREQ(p, "Hello, world!");
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  EXPECT_THROW(promise.get_future();, corio::future_already_retrieved_error);
 }
 
-TEST(promise_value, set_exception_after_get_future_before_async_get)
+TEST_F(promise_value_f, set_value)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int, executor>;
-
-  promise prom(ctx);
-
-  using future = corio::basic_future<int, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  prom.set_exception(std::make_exception_ptr(std::runtime_error("Hello, world!")));
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  char const *p = nullptr;
-  fut.async_get(
-    [&p](auto v) -> void{
-      try {
-        corio::get(v);
-      }
-      catch(std::runtime_error const &e)
-      {
-        p = e.what();
-      }
-    });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_STREQ(p, "Hello, world!");
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  promise.set_value(42);
 }
 
-TEST(promise_value, set_exception_after_async_get)
+TEST_F(promise_value_f, set_exception)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int, executor>;
-
-  promise prom(ctx);
-
-  using future = corio::basic_future<int, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  char const *p = nullptr;
-  fut.async_get(
-    [&p](auto v) -> void{
-      try {
-        corio::get(v);
-      }
-      catch(std::runtime_error const &e)
-      {
-        p = e.what();
-      }
-    });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  prom.set_exception(std::make_exception_ptr(std::runtime_error("Hello, world!")));
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_STREQ(p, "Hello, world!");
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  auto p = std::make_exception_ptr(std::runtime_error("Hello, world!"));
+  promise.set_exception(p);
 }
 
-TEST(promise_reference, constructor)
+namespace{
+
+class promise_value_v
+  : public ::testing::Test
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int &, executor>;
-  promise prom(ctx);
+protected:
+  promise_value_v()
+    : context(),
+      promise(context)
+  {
+    promise.set_value(42);
+  }
+
+  boost::asio::io_context context;
+  corio::promise<int> promise;
+}; // class promise_value_v
+
+} // namespace *unnamed*
+
+TEST_F(promise_value_v, get_executor)
+{
+  EXPECT_EQ(promise.get_executor(), context.get_executor());
 }
 
-TEST(promise_reference, get_future)
+TEST_F(promise_value_v, get_future)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int &, executor>;
-  promise prom(ctx);
-
-  using future = corio::basic_future<int &, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
+  auto future = promise.get_future();
+  EXPECT_EQ(future.get_executor(), context.get_executor());
+  EXPECT_TRUE(future.valid());
 }
 
-TEST(promise_reference, set_value_before_get_future)
+TEST_F(promise_value_v, set_value)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int &, executor>;
-
-  int i = 42;
-
-  promise prom(ctx);
-  prom.set_value(i);
-
-  using future = corio::basic_future<int &, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  int *p = nullptr;
-  fut.async_get([&p](auto v) -> void{ p = &corio::get(v); });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, &i);
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  EXPECT_THROW(promise.set_value(42);, corio::promise_already_satisfied_error);
 }
 
-TEST(promise_reference, set_value_after_get_future_before_async_get)
+TEST_F(promise_value_v, set_exception)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int &, executor>;
-
-  promise prom(ctx);
-
-  using future = corio::basic_future<int &, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  int i = 42;
-
-  prom.set_value(i);
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  int *p = nullptr;
-  fut.async_get([&p](auto v) -> void{ p = &corio::get(v); });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, &i);
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  auto p = std::make_exception_ptr(std::runtime_error("Hello, world!"));
+  EXPECT_THROW(promise.set_exception(p);, corio::promise_already_satisfied_error);
 }
 
-TEST(promise_reference, set_value_after_async_get)
+namespace{
+
+class promise_value_x
+  : public ::testing::Test
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int &, executor>;
+protected:
+  promise_value_x()
+    : context(),
+      promise(context)
+  {
+    auto p = std::make_exception_ptr(std::runtime_error("Hello, world!"));
+    promise.set_exception(p);
+  }
 
-  promise prom(ctx);
+  boost::asio::io_context context;
+  corio::promise<int> promise;
+}; // class promise_value_x
 
-  using future = corio::basic_future<int &, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
+} // namespace *unnamed*
 
-  int *p = nullptr;
-  fut.async_get([&p](auto v) -> void{ p = &corio::get(v); });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  int i = 42;
-  prom.set_value(i);
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, &i);
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+TEST_F(promise_value_x, get_executor)
+{
+  EXPECT_EQ(promise.get_executor(), context.get_executor());
 }
 
-TEST(promise_reference, set_exception_before_get_future)
+TEST_F(promise_value_x, get_future)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int &, executor>;
-
-  promise prom(ctx);
-  prom.set_exception(std::make_exception_ptr(std::runtime_error("Hello, world!")));
-
-  using future = corio::basic_future<int &, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  char const *p = nullptr;
-  fut.async_get(
-    [&p](auto v) -> void{
-      try {
-        corio::get(v);
-      }
-      catch(std::runtime_error const &e)
-      {
-        p = e.what();
-      }
-    });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_STREQ(p, "Hello, world!");
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  auto future = promise.get_future();
+  EXPECT_EQ(future.get_executor(), context.get_executor());
+  EXPECT_TRUE(future.valid());
 }
 
-TEST(promise_reference, set_exception_after_get_future_before_async_get)
+TEST_F(promise_value_x, set_value)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int &, executor>;
-
-  promise prom(ctx);
-
-  using future = corio::basic_future<int &, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  prom.set_exception(std::make_exception_ptr(std::runtime_error("Hello, world!")));
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  char const *p = nullptr;
-  fut.async_get(
-    [&p](auto v) -> void{
-      try {
-        corio::get(v);
-      }
-      catch(std::runtime_error const &e)
-      {
-        p = e.what();
-      }
-    });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_STREQ(p, "Hello, world!");
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  EXPECT_THROW(promise.set_value(42);, corio::promise_already_satisfied_error);
 }
 
-TEST(promise_reference, set_exception_after_async_get)
+TEST_F(promise_value_x, set_exception)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<int &, executor>;
-
-  promise prom(ctx);
-
-  using future = corio::basic_future<int &, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  char const *p = nullptr;
-  fut.async_get(
-    [&p](auto v) -> void{
-      try {
-        corio::get(v);
-      }
-      catch(std::runtime_error const &e)
-      {
-        p = e.what();
-      }
-    });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  prom.set_exception(std::make_exception_ptr(std::runtime_error("Hello, world!")));
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_STREQ(p, "Hello, world!");
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  auto p = std::make_exception_ptr(std::runtime_error("Hello, world!"));
+  EXPECT_THROW(promise.set_exception(p);, corio::promise_already_satisfied_error);
 }
 
-TEST(promise_void, constructor)
+namespace{
+
+class promise_value_fv
+  : public ::testing::Test
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<void, executor>;
-  promise prom(ctx);
+protected:
+  promise_value_fv()
+    : context(),
+      promise(context),
+      future(promise.get_future())
+  {
+    promise.set_value(42);
+  }
+
+  boost::asio::io_context context;
+  corio::promise<int> promise;
+  corio::future<int> future;
+}; // class promise_value_fv
+
+} // namespace *unnamed*
+
+TEST_F(promise_value_fv, get_executor)
+{
+  EXPECT_EQ(promise.get_executor(), context.get_executor());
 }
 
-TEST(promise_void, get_future)
+TEST_F(promise_value_fv, get_future)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<void, executor>;
-  promise prom(ctx);
-
-  using future = corio::basic_future<void, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
+  EXPECT_THROW(promise.get_future();, corio::future_already_retrieved_error);
 }
 
-TEST(promise_void, set_value_before_get_future)
+TEST_F(promise_value_fv, set_value)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<void, executor>;
-
-  promise prom(ctx);
-  prom.set_value();
-
-  using future = corio::basic_future<void, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  int i = 0;
-  fut.async_get([&i](auto v) -> void{ corio::get(v); i = 42; });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 0);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 42);
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  EXPECT_THROW(promise.set_value(42);, corio::promise_already_satisfied_error);
 }
 
-TEST(promise_void, set_value_after_get_future_before_async_get)
+TEST_F(promise_value_fv, set_exception)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<void, executor>;
-
-  promise prom(ctx);
-
-  using future = corio::basic_future<void, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  prom.set_value();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  int i = 0;
-  fut.async_get([&i](auto v) -> void{ corio::get(v); i = 42; });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 0);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 42);
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  auto p = std::make_exception_ptr(std::runtime_error("Hello, world!"));
+  EXPECT_THROW(promise.set_exception(p);, corio::promise_already_satisfied_error);
 }
 
-TEST(promise_void, set_value_after_async_get)
+namespace{
+
+class promise_value_fx
+  : public ::testing::Test
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<void, executor>;
+protected:
+  promise_value_fx()
+    : context(),
+      promise(context),
+      future(promise.get_future())
+  {
+    auto p = std::make_exception_ptr("Hello, world!");
+    promise.set_exception(p);
+  }
 
-  promise prom(ctx);
+  boost::asio::io_context context;
+  corio::promise<int> promise;
+  corio::future<int> future;
+}; // class promise_value_fx
 
-  using future = corio::basic_future<void, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
+} // namespace *unnamed*
 
-  int i = 0;
-  fut.async_get([&i](auto v) -> void{ corio::get(v); i = 42; });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 0);
-  EXPECT_FALSE(ctx.stopped());
-
-  prom.set_value();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 0);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(i, 42);
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+TEST_F(promise_value_fx, get_executor)
+{
+  EXPECT_EQ(promise.get_executor(), context.get_executor());
 }
 
-TEST(promise_void, set_exception_before_get_future)
+TEST_F(promise_value_fx, get_future)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<void, executor>;
-
-  promise prom(ctx);
-  prom.set_exception(std::make_exception_ptr(std::runtime_error("Hello, world!")));
-
-  using future = corio::basic_future<void, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  char const *p = nullptr;
-  fut.async_get(
-    [&p](auto v) -> void{
-      try {
-        corio::get(v);
-      }
-      catch(std::runtime_error const &e)
-      {
-        p = e.what();
-      }
-    });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_STREQ(p, "Hello, world!");
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  EXPECT_THROW(promise.get_future();, corio::future_already_retrieved_error);
 }
 
-TEST(promise_void, set_exception_after_get_future_before_async_get)
+TEST_F(promise_value_fx, set_value)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<void, executor>;
-
-  promise prom(ctx);
-
-  using future = corio::basic_future<void, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  prom.set_exception(std::make_exception_ptr(std::runtime_error("Hello, world!")));
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  char const *p = nullptr;
-  fut.async_get(
-    [&p](auto v) -> void{
-      try {
-        corio::get(v);
-      }
-      catch(std::runtime_error const &e)
-      {
-        p = e.what();
-      }
-    });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_STREQ(p, "Hello, world!");
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  EXPECT_THROW(promise.set_value(42);, corio::promise_already_satisfied_error);
 }
 
-TEST(promise_void, set_exception_after_async_get)
+TEST_F(promise_value_fx, set_exception)
 {
-  using context = boost::asio::io_context;
-  context ctx;
-  using executor = context::executor_type;
-  using promise = corio::thread_unsafe::basic_promise<void, executor>;
-
-  promise prom(ctx);
-
-  using future = corio::basic_future<void, executor>;
-  [[maybe_unused]] future fut = prom.get_future();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  char const *p = nullptr;
-  fut.async_get(
-    [&p](auto v) -> void{
-      try {
-        corio::get(v);
-      }
-      catch(std::runtime_error const &e)
-      {
-        p = e.what();
-      }
-    });
-  EXPECT_TRUE(fut.valid());
-  EXPECT_EQ(p, nullptr);
-  EXPECT_FALSE(ctx.stopped());
-
-  prom.set_exception(std::make_exception_ptr(std::runtime_error("Hello, world!")));
-  EXPECT_TRUE(fut.valid());
-  EXPECT_FALSE(ctx.stopped());
-
-  boost::asio::io_context::count_type count = ctx.run();
-  EXPECT_TRUE(fut.valid());
-  EXPECT_STREQ(p, "Hello, world!");
-  EXPECT_GE(count, 1u);
-  EXPECT_TRUE(ctx.stopped());
+  auto p = std::make_exception_ptr(std::runtime_error("Hello, world!"));
+  EXPECT_THROW(promise.set_exception(p);, corio::promise_already_satisfied_error);
 }

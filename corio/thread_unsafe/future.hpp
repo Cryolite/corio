@@ -33,12 +33,12 @@ protected:
   static_assert(corio::is_executor_v<executor_type>);
   using state_type_ = corio::thread_unsafe::detail_::shared_future_state_<R, executor_type>;
 
-  explicit future_mixin_(state_type_ const &state) noexcept
-    : state_(state)
+  future_mixin_() noexcept
+    : state_()
   {}
 
-  future_mixin_() noexcept
-    : state_(nullptr)
+  explicit future_mixin_(state_type_ const &state) noexcept
+    : state_(state)
   {}
 
   future_mixin_(future_mixin_ const &) = delete;
@@ -61,27 +61,6 @@ protected:
     return *this;
   }
 
-  bool has_executor() const
-  {
-    if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
-    }
-    return state_.has_executor();
-  }
-
-  void set_executor(executor_type const &executor)
-  {
-    set_executor(executor_type(executor));
-  }
-
-  void set_executor(executor_type &&executor)
-  {
-    if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
-      CORIO_THROW<corio::no_future_state_error>();
-    }
-    state_.set_executor(std::move(executor));
-  }
-
   executor_type get_executor() const
   {
     if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
@@ -96,7 +75,7 @@ protected:
   }
 
   template<typename CompletionToken>
-  auto async_wait(CompletionToken &&token)
+  auto async_wait(CompletionToken &&token) const
   {
     if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
       CORIO_THROW<corio::no_future_state_error>();
@@ -106,6 +85,30 @@ protected:
     completion_handler_type h(std::forward<CompletionToken>(token));
     async_result_type result(h);
     state_.async_wait(std::move(h));
+    return result.get();
+  }
+
+  template<typename Rep, typename Period, typename CompletionToken>
+  auto async_wait_for(std::chrono::duration<Rep, Period> const &rel_time,
+                      CompletionToken &&token) const
+  {
+    return async_wait_until(std::chrono::steady_clock::now() + rel_time,
+                            std::forward<CompletionToken>(token));
+  }
+
+  template<typename Clock, typename Duration, typename CompletionToken>
+  auto async_wait_until(std::chrono::time_point<Clock, Duration> const &abs_time,
+                        CompletionToken &&token) const
+  {
+    if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
+      CORIO_THROW<corio::no_future_state_error>();
+    }
+    using async_result_type = boost::asio::async_result<
+      std::decay_t<CompletionToken>, void(std::future_status)>;
+    using completion_handler_type = typename async_result_type::completion_handler_type;
+    completion_handler_type h(std::forward<CompletionToken>(token));
+    async_result_type result(h);
+    state_.async_wait_until(abs_time, std::move(h));
     return result.get();
   }
 
@@ -131,6 +134,9 @@ class basic_future
   : private detail_::future_mixin_<R, Executor>
 {
 public:
+  static_assert(!std::is_const_v<R>);
+  static_assert(!std::is_volatile_v<R>);
+  static_assert(!std::is_rvalue_reference_v<R>);
   using executor_type = Executor;
   static_assert(corio::is_executor_v<executor_type>);
 
@@ -158,10 +164,6 @@ public:
     lhs.swap(rhs);
   }
 
-  using mixin_type_::has_executor;
-
-  using mixin_type_::set_executor;
-
   using mixin_type_::get_executor;
 
   using mixin_type_::valid;
@@ -181,6 +183,10 @@ public:
   }
 
   using mixin_type_::async_wait;
+
+  using mixin_type_::async_wait_for;
+
+  using mixin_type_::async_wait_until;
 
   using mixin_type_::await_ready;
 
@@ -225,10 +231,6 @@ public:
     lhs.swap(rhs);
   }
 
-  using mixin_type_::has_executor;
-
-  using mixin_type_::set_executor;
-
   using mixin_type_::get_executor;
 
   using mixin_type_::valid;
@@ -248,6 +250,10 @@ public:
   }
 
   using mixin_type_::async_wait;
+
+  using mixin_type_::async_wait_for;
+
+  using mixin_type_::async_wait_until;
 
   using mixin_type_::await_ready;
 
@@ -292,10 +298,6 @@ public:
     lhs.swap(rhs);
   }
 
-  using mixin_type_::has_executor;
-
-  using mixin_type_::set_executor;
-
   using mixin_type_::get_executor;
 
   using mixin_type_::valid;
@@ -315,6 +317,10 @@ public:
   }
 
   using mixin_type_::async_wait;
+
+  using mixin_type_::async_wait_for;
+
+  using mixin_type_::async_wait_until;
 
   using mixin_type_::await_ready;
 

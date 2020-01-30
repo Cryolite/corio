@@ -1,10 +1,11 @@
 #if !defined(CORIO_THREAD_UNSAFE_DETAIL_SHARED_FUTURE_STATE_HPP_INCLUDE_GUARD)
 #define CORIO_THREAD_UNSAFE_DETAIL_SHARED_FUTURE_STATE_HPP_INCLUDE_GUARD
 
-#include <corio/thread_unsafe/mutex.hpp>
+#include <corio/thread_unsafe/condition_variable.hpp>
 #include <corio/core/is_executor.hpp>
 #include <corio/util/expected.hpp>
 #include <corio/util/assert.hpp>
+#include <future>
 #include <type_traits>
 #include <utility>
 #include <exception>
@@ -29,25 +30,14 @@ private:
   class impl_
   {
   private:
-    using mutex_type_ = corio::thread_unsafe::basic_mutex<executor_type>;
-    using lock_type_ = typename mutex_type_::lock_type;
+    using cv_type_ = corio::thread_unsafe::basic_condition_variable<executor_type>;
 
   public:
-    impl_()
-      : mtx_(),
-        value_(),
-        refcount_(0u)
-    {
-      mtx_.try_lock();
-    }
-
     explicit impl_(executor_type &&executor)
-      : mtx_(std::move(executor)),
-        value_(),
-        refcount_(0u)
-    {
-      mtx_.try_lock();
-    }
+      : value_(),
+        cv_(std::move(executor)),
+        refcount_()
+    {}
 
     impl_(impl_ const &) = delete;
 
@@ -64,22 +54,10 @@ private:
       return --refcount_;
     }
 
-    bool has_executor() const noexcept
-    {
-      CORIO_ASSERT(refcount_ > 0u);
-      return mtx_.has_executor();
-    }
-
-    void set_executor(executor_type &&executor)
-    {
-      CORIO_ASSERT(refcount_ > 0u);
-      mtx_.set_executor(std::move(executor));
-    }
-
     executor_type get_executor() const
     {
       CORIO_ASSERT(refcount_ > 0u);
-      return mtx_.get_executor();
+      return cv_.get_executor();
     }
 
     bool ready() const noexcept
@@ -92,32 +70,33 @@ private:
     void set_value(Args &&... args)
     {
       CORIO_ASSERT(!ready());
-      CORIO_ASSERT(!mtx_.try_lock());
+      static_assert(sizeof...(Args) <= 1u);
       value_.emplace(std::forward<Args>(args)...);
-      mtx_.unlock();
+      cv_.notify_all();
     }
 
     void set_exception(std::exception_ptr p)
     {
       CORIO_ASSERT(!ready());
-      CORIO_ASSERT(!mtx_.try_lock());
       value_.set_exception(std::move(p));
-      mtx_.unlock();
+      cv_.notify_all();
     }
 
     template<typename CompletionHandler>
     void async_get(CompletionHandler &&h)
     {
       CORIO_ASSERT(refcount_ > 0u);
-      // The only caller of this function, `shared_future_state_::async_get`,
-      // guarantees that `h` has ownership of the object pointed by `this`.
-      // Thus, use of a reference to the member variable `value_` is safe as
-      // long as `h_` (a moved-to destination of `h`, to which ownership of the
-      // object pointed by `this` is transferred) lives.
-      mtx_.async_lock(
-        [h_ = std::move(h), &value = value_](lock_type_ lock) mutable -> void{
-          lock = lock_type_();
-          std::move(h_)(std::move(value));
+      // A NOTE ON THE LIFETIME OF `*this`. Since `this` is captured by the
+      // following closure types, someone must guarantee that the object
+      // pointed to by `this` lives until the callback `h` is invoked. This
+      // condition is always satisfied because, only `basic_promise::set_value`
+      // or `basic_promise::set_exception` invokes the callback and the object
+      // of the type `basic_promise` shares the ownership of the object pointed
+      // to by `this`.
+      cv_.async_wait(
+        [this]() -> bool{ return ready(); },
+        [h_ = std::move(h), this]() -> void{
+          std::move(h_)(std::move(value_));
         });
     }
 
@@ -125,33 +104,37 @@ private:
     void async_wait(CompletionHandler &&h)
     {
       CORIO_ASSERT(refcount_ > 0u);
-      mtx_.async_lock(
-        [h_ = std::move(h)](lock_type_ lock) mutable -> void{
-          lock = lock_type_();
-          std::move(h_)();
+      cv_.async_wait([this]() -> bool{ return ready(); }, std::move(h));
+    }
+
+    template<typename Clock, typename Duration, typename CompletionHandler>
+    void async_wait_until(std::chrono::time_point<Clock, Duration> const &abs_time, CompletionHandler &&h)
+    {
+      CORIO_ASSERT(refcount_ > 0u);
+      cv_.async_wait_until(
+        abs_time,
+        [this]() -> bool{ return ready(); },
+        [h_ = std::move(h)](std::cv_status status) mutable -> void{
+          std::move(h_)(status == std::cv_status::no_timeout
+                        ? std::future_status::ready
+                        : std::future_status::timeout);
         });
     }
 
     R get()
     {
-      CORIO_ASSERT(refcount_ > 0u);
+      CORIO_ASSERT(ready());
       return corio::get(value_);
     }
 
   private:
-    mutex_type_ mtx_;
-    expected<R> value_;
+    corio::expected<R> value_;
+    cv_type_ cv_;
     std::size_t refcount_;
   }; // class impl_
 
 public:
-  shared_future_state_()
-    : p_(new impl_())
-  {
-    p_->acquire();
-  }
-
-  explicit shared_future_state_(std::nullptr_t) noexcept
+  shared_future_state_() noexcept
     : p_()
   {}
 
@@ -205,18 +188,6 @@ public:
     return *this;
   }
 
-  bool has_executor() const
-  {
-    CORIO_ASSERT(p_ != nullptr);
-    return p_->has_executor();
-  }
-
-  void set_executor(executor_type &&executor)
-  {
-    CORIO_ASSERT(p_ != nullptr);
-    p_->set_executor(std::move(executor));
-  }
-
   executor_type get_executor() const
   {
     CORIO_ASSERT(p_ != nullptr);
@@ -237,6 +208,7 @@ public:
   void set_value(Args &&... args)
   {
     CORIO_ASSERT(p_ != nullptr);
+    static_assert(sizeof...(Args) <= 1u);
     p_->set_value(std::forward<Args>(args)...);
   }
 
@@ -250,24 +222,22 @@ public:
   void async_get(CompletionHandler &&h)
   {
     CORIO_ASSERT(p_ != nullptr);
-    // Intentional copy of `*this` to the lambda capture increments the
-    // reference count of the object referred to by `p_`. This guarantees that
-    // the object referred to by `p_` lives as long as the closure object
-    // lives.
-    p_->async_get(
-      [self = *this, h_ = std::move(h)](corio::expected<R> value) mutable -> void{
-        std::move(h_)(std::move(value));
-      });
+    p_->async_get(std::move(h));
   }
 
   template<typename CompletionHandler>
-  void async_wait(CompletionHandler &&h)
+  void async_wait(CompletionHandler &&h) const
   {
     CORIO_ASSERT(p_ != nullptr);
-    p_->async_wait(
-      [self = *this, h_ = std::move(h)]() mutable -> void{
-        std::move(h_)();
-      });
+    p_->async_wait(std::move(h));
+  }
+
+  template<typename Clock, typename Duration, typename CompletionHandler>
+  void async_wait_until(std::chrono::time_point<Clock, Duration> const &abs_time,
+                        CompletionHandler &&h) const
+  {
+    CORIO_ASSERT(p_ != nullptr);
+    p_->async_wait_until(abs_time, std::move(h));
   }
 
   R get()

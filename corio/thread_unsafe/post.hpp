@@ -12,42 +12,10 @@
 
 namespace corio::thread_unsafe{
 
-template<typename Executor0, typename R, typename Executor1>
-void post(
-  Executor0 &&executor,
-  corio::thread_unsafe::basic_coroutine<R, Executor1> &&coro,
-  corio::disable_if_execution_context_t<Executor0> * = nullptr,
-  corio::enable_if_executor_t<Executor0> * = nullptr)
+template<typename R, typename Executor>
+void post(corio::thread_unsafe::basic_coroutine<R, Executor> &&coro)
 {
-  if (coro.has_executor()) {
-    if (coro.get_executor() != executor) {
-      CORIO_THROW<corio::bad_executor_error>();
-    }
-  }
-  else {
-    coro.set_executor(executor);
-  }
-  boost::asio::post(std::move(executor), [coro_ = std::move(coro)]() mutable -> void { coro_.resume(); });
-}
-
-template<typename Executor0, typename R, typename Executor1>
-void post(
-  Executor0 const &executor,
-  corio::thread_unsafe::basic_coroutine<R, Executor1> &&coro,
-  corio::disable_if_execution_context_t<Executor0> * = nullptr,
-  corio::enable_if_executor_t<Executor0> * = nullptr)
-{
-  corio::thread_unsafe::post(Executor0(executor), std::move(coro));
-}
-
-template<typename ExecutionContext, typename R, typename Executor>
-void post(
-  ExecutionContext &ctx,
-  corio::thread_unsafe::basic_coroutine<R, Executor> &&coro,
-  corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
-  corio::disable_if_executor_t<ExecutionContext> * = nullptr)
-{
-  corio::thread_unsafe::post(ctx.get_executor(), std::move(coro));
+  boost::asio::post(coro.get_executor(), [coro_ = std::move(coro)]() mutable -> void { coro_.resume(); });
 }
 
 } // namespace corio::thread_unsafe
