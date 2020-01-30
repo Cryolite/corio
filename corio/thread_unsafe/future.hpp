@@ -10,6 +10,8 @@
 #include <boost/asio/async_result.hpp>
 #include <boost/asio/executor.hpp>
 #include <boost/config.hpp>
+#include <future>
+#include <chrono>
 #include <type_traits>
 #include <utility>
 #include <experimental/coroutine>
