@@ -126,7 +126,8 @@ add_executable(corio_test
   test/thread_unsafe/condition_variable.cpp
   test/thread_unsafe/promise.cpp
   test/thread_unsafe/future.cpp
-  test/thread_unsafe/coroutine.cpp)
+  test/thread_unsafe/coroutine.cpp
+  test/thread_unsafe/use_future.cpp)
 target_link_libraries(corio_test
   boost_stacktrace_backtrace
   gtest_main)

@@ -1,5 +1,4 @@
 #include <corio/thread_unsafe/post.hpp>
-#include <corio/thread_unsafe/resume.hpp>
 #include <corio/thread_unsafe/coroutine.hpp>
 #include <boost/asio/system_timer.hpp>
 #include <boost/asio/executor.hpp>
@@ -25,9 +24,9 @@ double get_time_in_seconds()
 
 corio::coroutine<void> sleep_sort(boost::asio::executor const &, int n)
 {
-  boost::asio::system_timer timer(co_await corio::this_executor);
+  boost::asio::system_timer timer(CORIO_THIS_EXECUTOR());
   timer.expires_after(n * std::chrono::milliseconds(100));
-  co_await timer.async_wait(corio::resume(co_await corio::this_executor));
+  co_await timer.async_wait(CORIO_USE_FUTURE());
   std::cout << n << " (thread id: " << std::this_thread::get_id()
             << ", time: " << get_time_in_seconds() << "s)" << std::endl;
 }
