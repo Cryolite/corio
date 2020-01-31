@@ -2,8 +2,11 @@
 #define CORIO_THREAD_UNSAFE_COROUTINE_PROMISE_HPP_INCLUDE_GUARD
 
 #include <corio/thread_unsafe/coroutine.hpp>
-#include <corio/thread_unsafe/promise.hpp>
 #include <corio/thread_unsafe/coroutine_cleanup_service.hpp>
+#include <corio/thread_unsafe/detail_/use_future_.hpp>
+#include <corio/thread_unsafe/promise.hpp>
+#include <corio/core/use_future.hpp>
+#include <corio/core/this_executor.hpp>
 #include <corio/core/is_executor.hpp>
 #include <corio/core/error.hpp>
 #include <corio/util/throw.hpp>
@@ -19,11 +22,6 @@
 
 
 namespace corio::thread_unsafe{
-
-struct this_executor_t
-{};
-
-inline constexpr this_executor_t this_executor{};
 
 template<typename R, typename Executor>
 class coroutine_promise;
@@ -186,7 +184,7 @@ public:
     return {};
   }
 
-  [[nodiscard]] auto await_transform(this_executor_t)
+  [[nodiscard]] auto await_transform(corio::this_executor_t)
   {
     class [[nodiscard]] awaiter
     {
@@ -217,6 +215,15 @@ public:
     }; // struct awaiter
 
     return awaiter(get_executor());
+  }
+
+  template<typename NoThrow>
+  [[nodiscard]] auto await_transform(corio::use_future_t<NoThrow>)
+  {
+    using nothrow_type = NoThrow;
+    executor_type executor = get_executor();
+    using token_type = corio::thread_unsafe::detail_::use_future_token_<executor_type, nothrow_type>;
+    return token_type(std::move(executor));
   }
 
   template<typename T>
