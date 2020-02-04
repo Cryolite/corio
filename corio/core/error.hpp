@@ -78,8 +78,9 @@ class invalid_coroutine_error
 {
 public:
   invalid_coroutine_error()
-    : std::logic_error("Attempt to make a prohibited operation on an invalid coroutine object,"
-                       " which indicates that the object is default-constructed or moved-from.")
+    : std::logic_error("Attempting to make a prohibited operation on an"
+                       " invalid coroutine object, which indicates that the"
+                       " object is default-constructed or moved-from.")
   {}
 }; // class invalid_coroutine_error
 
@@ -91,6 +92,27 @@ public:
     : std::logic_error("Attempting to resume an already done coroutine object.")
   {}
 }; // class coroutine_already_done_error
+
+class coroutine_already_destroyed_error
+  : public std::logic_error
+{
+public:
+  coroutine_already_destroyed_error()
+    : std::logic_error("Attempting to perform a prohibited operation on an"
+                       " already destroyed coroutine.")
+  {}
+}; // class coroutine_already_destroyed_error
+
+class invalid_coroutine_handle_error
+  : public std::logic_error
+{
+public:
+  invalid_coroutine_handle_error()
+    : std::logic_error("Attempting to perform a prohibited operation on an"
+                       " invalid coroutine handle object, which indicates that"
+                       " the object is default-constructed or moved-from.")
+  {}
+}; // class invalid_coroutine_handle_error
 
 } // namespace corio
 

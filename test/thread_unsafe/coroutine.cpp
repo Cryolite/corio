@@ -9,6 +9,8 @@
 namespace corio
 { using namespace thread_unsafe; }
 
+#if 0
+
 namespace{
 
 corio::coroutine<void> f(boost::asio::executor const &, int &i)
@@ -186,3 +188,5 @@ TEST_F(coroutine_done_dtor, done)
 {
   EXPECT_THROW(coro.done();, corio::invalid_coroutine_error);
 }
+
+#endif

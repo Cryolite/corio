@@ -11,6 +11,8 @@
 namespace corio
 { using namespace thread_unsafe; }
 
+#if 0
+
 namespace{
 
 corio::coroutine<void> test_post(boost::asio::executor const &, int &i, int &j)
@@ -51,3 +53,5 @@ TEST(use_future, test_resolve)
   corio::post(test_resolve(context.get_executor()));
   context.run();
 }
+
+#endif

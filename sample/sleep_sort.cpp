@@ -22,7 +22,7 @@ double get_time_in_seconds()
 
 }
 
-corio::coroutine<void> sleep_sort(boost::asio::executor const &, int n)
+corio::coroutine<void> sleep_sort(int n)
 {
   boost::asio::system_timer timer(CORIO_THIS_EXECUTOR());
   timer.expires_after(n * std::chrono::milliseconds(100));
@@ -40,16 +40,16 @@ int main()
   using context = boost::asio::io_context;
   context ctx;
 
-  corio::post(sleep_sort(ctx.get_executor(), 3));
-  corio::post(sleep_sort(ctx.get_executor(), 7));
-  corio::post(sleep_sort(ctx.get_executor(), 4));
-  corio::post(sleep_sort(ctx.get_executor(), 9));
-  corio::post(sleep_sort(ctx.get_executor(), 1));
-  corio::post(sleep_sort(ctx.get_executor(), 2));
-  corio::post(sleep_sort(ctx.get_executor(), 5));
-  corio::post(sleep_sort(ctx.get_executor(), 8));
-  corio::post(sleep_sort(ctx.get_executor(), 6));
-  corio::post(sleep_sort(ctx.get_executor(), 0));
+  corio::post(ctx, sleep_sort, 3);
+  corio::post(ctx, sleep_sort, 7);
+  corio::post(ctx, sleep_sort, 4);
+  corio::post(ctx, sleep_sort, 9);
+  corio::post(ctx, sleep_sort, 1);
+  corio::post(ctx, sleep_sort, 2);
+  corio::post(ctx, sleep_sort, 5);
+  corio::post(ctx, sleep_sort, 8);
+  corio::post(ctx, sleep_sort, 6);
+  corio::post(ctx, sleep_sort, 0);
 
   ctx.run();
 }
