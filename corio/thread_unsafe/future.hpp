@@ -105,8 +105,7 @@ protected:
     if (BOOST_UNLIKELY(!valid())) /*[[unlikely]]*/ {
       CORIO_THROW<corio::no_future_state_error>();
     }
-    using async_result_type = boost::asio::async_result<
-      std::decay_t<CompletionToken>, void(std::future_status)>;
+    using async_result_type = boost::asio::async_result<std::decay_t<CompletionToken>, void(std::future_status)>;
     using completion_handler_type = typename async_result_type::completion_handler_type;
     completion_handler_type h(std::forward<CompletionToken>(token));
     async_result_type result(h);

@@ -117,9 +117,7 @@ private:
         abs_time,
         [this]() -> bool{ return ready(); },
         [h_ = std::move(h)](std::cv_status status) mutable -> void{
-          std::move(h_)(status == std::cv_status::no_timeout
-                        ? std::future_status::ready
-                        : std::future_status::timeout);
+          std::move(h_)(status == std::cv_status::no_timeout ? std::future_status::ready : std::future_status::timeout);
         });
     }
 

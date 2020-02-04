@@ -12,6 +12,7 @@
 #include <boost/asio/executor.hpp>
 #include <boost/config.hpp>
 #include <type_traits>
+#include <functional>
 #include <utility>
 #include <experimental/coroutine>
 
@@ -23,57 +24,67 @@ class basic_coroutine;
 
 namespace detail_{
 
-template<typename SourceExecutor, typename R, typename TargetExecutor, typename F, typename... Args>
-struct enable_if_postable_executor_
+template<typename Executor, typename T>
+struct enable_if_postable_executor_impl1_
+{};
+
+template<typename SourceExecutor, typename R, typename TargetExecutor>
+struct enable_if_postable_executor_impl1_<SourceExecutor, corio::thread_unsafe::basic_coroutine<R, TargetExecutor> >
   : public std::enable_if<
-      corio::is_executor_v<std::decay_t<SourceExecutor> >
-      && corio::is_executor_v<TargetExecutor>
-      && std::is_constructible_v<TargetExecutor, SourceExecutor>
-      && std::is_invocable_r_v<basic_coroutine<R, TargetExecutor>, F, Args &&...>,
+      corio::is_executor_v<TargetExecutor> && std::is_constructible_v<TargetExecutor, SourceExecutor>,
       corio::thread_unsafe::basic_future<R, TargetExecutor> >
 {};
 
-template<typename SourceExecutor, typename R, typename TargetExecutor, typename F, typename... Args>
-using enable_if_postable_executor_t_ = typename enable_if_postable_executor_<
-  SourceExecutor, R, TargetExecutor, F, Args...>::type;
-
-template<typename ExecutionContext, typename R, typename Executor, typename F, typename... Args>
-struct enable_if_postable_execution_context_
-  : public std::enable_if<
-      corio::is_execution_context_v<ExecutionContext>
-      && corio::is_executor_v<Executor>
-/*&& std::is_constructible_v<Executor, typename ExecutionContext::executor_type>*/
-      && std::is_invocable_r_v<basic_coroutine<R, Executor>, F, Args &&...>,
-      corio::thread_unsafe::basic_future<R, Executor> >
+template<typename Executor, typename F, typename... Args>
+struct enable_if_postable_executor_impl0_
+  : public enable_if_postable_executor_impl1_<Executor, std::invoke_result_t<F, Args...> >
 {};
 
-template<typename ExecutionContext, typename R, typename Executor, typename F, typename... Args>
-using enable_if_postable_execution_context_t_ = typename enable_if_postable_execution_context_<
-  ExecutionContext, R, Executor, F, Args...>::type;
+template<typename Executor, typename F, typename... Args>
+struct enable_if_postable_executor_
+  : public std::conditional_t<
+      corio::is_executor_v<std::decay_t<Executor> > && std::is_invocable_v<F, Args...>,
+      enable_if_postable_executor_impl0_<Executor, F, Args...>,
+      std::monostate>
+{};
+
+template<typename Executor, typename F, typename... Args>
+using enable_if_postable_executor_t_ = typename enable_if_postable_executor_<Executor, F, Args...>::type;
+
+template<typename ExecutionContext, typename F, typename... Args>
+struct enable_if_postable_execution_context_impl_
+  : public enable_if_postable_executor_<typename ExecutionContext::executor_type, F, Args...>
+{};
+
+template<typename ExecutionContext, typename F, typename... Args>
+struct enable_if_postable_execution_context_
+  : public std::conditional_t<
+      corio::is_execution_context_v<ExecutionContext>,
+      enable_if_postable_execution_context_impl_<ExecutionContext, F, Args...>,
+      std::monostate>
+{};
+
+template<typename ExecutionContext, typename F, typename... Args>
+using enable_if_postable_execution_context_t_ = typename enable_if_postable_execution_context_< ExecutionContext, F, Args...>::type;
 
 } // namespace detail_
 
-template<typename SourceExecutor, typename R, typename TargetExecutor, typename... Params, typename... Args>
-auto post(SourceExecutor &&executor,
-          corio::thread_unsafe::basic_coroutine<R, TargetExecutor> (*pf)(Params...),
-          Args &&... args)
-  -> detail_::enable_if_postable_executor_t_<SourceExecutor, R, TargetExecutor, decltype(pf), Args...>
+template<typename Executor, typename F, typename... Args>
+detail_::enable_if_postable_executor_t_<Executor, F, Args...> post(Executor &&executor, F &&f, Args &&... args)
 {
-  basic_coroutine coro = (*pf)(std::forward<Args>(args)...);
-  coro.set_executor(std::forward<SourceExecutor>(executor));
-  corio::thread_unsafe::basic_future<R, TargetExecutor> future = coro.get_future();
-  TargetExecutor e = coro.get_executor();
+  auto coro = std::invoke(std::forward<F>(f), std::forward<Args>(args)...);
+  coro.set_executor(std::forward<Executor>(executor));
+  auto future = coro.get_future();
+  auto e = coro.get_executor();
   boost::asio::post(std::move(e), [coro_ = std::move(coro)]() mutable -> void{ coro_.resume(); });
   return future;
 }
 
-template<typename ExecutionContext, typename R, typename Executor, typename... Params, typename... Args>
-auto post(ExecutionContext &context,
-          corio::thread_unsafe::basic_coroutine<R, Executor> (*pf)(Params...),
-          Args &&... args)
-  -> detail_::enable_if_postable_execution_context_t_<ExecutionContext, R, Executor, decltype(pf), Args...>
+template<typename ExecutionContext, typename F, typename... Args>
+detail_::enable_if_postable_execution_context_t_<ExecutionContext, F, Args...>
+post(ExecutionContext &context, F &&f, Args &&... args)
 {
-  return corio::thread_unsafe::post(context.get_executor(), pf, std::forward<Args>(args)...);
+  return corio::thread_unsafe::post(context.get_executor(), std::forward<F>(f), std::forward<Args>(args)...);
 }
 
 template<typename R, typename Executor>
@@ -91,11 +102,11 @@ public:
 private:
   using raw_handle_type_ = std::experimental::coroutine_handle<promise_type>;
   using handle_type_ = corio::thread_unsafe::detail_::coroutine_handle_;
+
   friend class corio::thread_unsafe::coroutine_promise<R, executor_type>;
-  template<typename SourceExecutor, typename RR, typename TargetExecutor, typename... Params, typename... Args>
-  friend auto corio::thread_unsafe::post(
-    SourceExecutor &&, basic_coroutine<RR, TargetExecutor> (*pf)(Params...), Args &&...)
-    -> detail_::enable_if_postable_executor_t_<SourceExecutor, RR, TargetExecutor, decltype(pf), Args...>;
+
+  template<typename OtherExecutor, typename F, typename... Args>
+  friend detail_::enable_if_postable_executor_t_<OtherExecutor, F, Args...> corio::thread_unsafe::post(OtherExecutor &&, F &&, Args &&...);
 
   explicit basic_coroutine(promise_type &promise) noexcept
     : p_(&promise),

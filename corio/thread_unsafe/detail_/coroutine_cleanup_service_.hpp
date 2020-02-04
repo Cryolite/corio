@@ -71,6 +71,17 @@ public:
     handle_ = nullptr;
   }
 
+  void notify_shutdown() noexcept
+  {
+    CORIO_ASSERT(p_active_list_ != nullptr);
+    CORIO_ASSERT(p_reserved_list_ != nullptr);
+    CORIO_ASSERT(handle_ != nullptr);
+    p_active_list_ = nullptr;
+    p_reserved_list_ = nullptr;
+    handle_.destroy();
+    handle_ = nullptr;
+  }
+
   void resume()
   {
     CORIO_ASSERT(p_active_list_ != nullptr);
@@ -195,6 +206,11 @@ public:
 private:
   virtual void shutdown() noexcept override
   {
+    for (auto &p : active_list_) {
+      CORIO_ASSERT(!corio::is_empty(p));
+      CORIO_ASSERT(p.get() != nullptr);
+      p->notify_shutdown();
+    }
     active_list_.clear();
     reserved_list_.clear();
   }
