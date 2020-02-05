@@ -1,7 +1,5 @@
-#include <corio/thread_unsafe/post.hpp>
 #include <corio/thread_unsafe/coroutine.hpp>
 #include <boost/asio/system_timer.hpp>
-#include <boost/asio/executor.hpp>
 #include <boost/asio/io_context.hpp>
 #include <thread>
 #include <iostream>

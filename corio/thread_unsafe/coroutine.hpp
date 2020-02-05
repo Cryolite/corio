@@ -1,8 +1,8 @@
 #if !defined(CORIO_THREAD_UNSAFE_COROUTINE_HPP_INCLUDE_GUARD)
 #define CORIO_THREAD_UNSAFE_COROUTINE_HPP_INCLUDE_GUARD
 
-#include <corio/thread_unsafe/future.hpp>
 #include <corio/thread_unsafe/detail_/coroutine_cleanup_service_.hpp>
+#include <corio/thread_unsafe/future.hpp>
 #include <corio/core/is_execution_context.hpp>
 #include <corio/core/is_executor.hpp>
 #include <corio/core/error.hpp>
@@ -45,7 +45,7 @@ struct enable_if_postable_executor_
   : public std::conditional_t<
       corio::is_executor_v<std::decay_t<Executor> > && std::is_invocable_v<F, Args...>,
       enable_if_postable_executor_impl0_<Executor, F, Args...>,
-      std::monostate>
+      std::enable_if<false> >
 {};
 
 template<typename Executor, typename F, typename... Args>
@@ -61,7 +61,7 @@ struct enable_if_postable_execution_context_
   : public std::conditional_t<
       corio::is_execution_context_v<ExecutionContext>,
       enable_if_postable_execution_context_impl_<ExecutionContext, F, Args...>,
-      std::monostate>
+      std::enable_if<false> >
 {};
 
 template<typename ExecutionContext, typename F, typename... Args>
@@ -106,7 +106,8 @@ private:
   friend class corio::thread_unsafe::coroutine_promise<R, executor_type>;
 
   template<typename OtherExecutor, typename F, typename... Args>
-  friend detail_::enable_if_postable_executor_t_<OtherExecutor, F, Args...> corio::thread_unsafe::post(OtherExecutor &&, F &&, Args &&...);
+  friend detail_::enable_if_postable_executor_t_<OtherExecutor, F, Args...>
+  corio::thread_unsafe::post(OtherExecutor &&, F &&, Args &&...);
 
   explicit basic_coroutine(promise_type &promise) noexcept
     : p_(&promise),

@@ -1,9 +1,9 @@
 #if !defined(CORIO_THREAD_UNSAFE_CONDITION_VARIABLE_HPP_INCLUDE_GUARD)
 #define CORIO_THREAD_UNSAFE_CONDITION_VARIABLE_HPP_INCLUDE_GUARD
 
+#include <corio/core/enable_if_execution_context.hpp>
 #include <corio/core/enable_if_executor.hpp>
 #include <corio/core/is_executor.hpp>
-#include <corio/core/enable_if_execution_context.hpp>
 #include <corio/util/enable_if_constructible.hpp>
 #include <corio/util/assert.hpp>
 #include <boost/asio/basic_waitable_timer.hpp>
@@ -37,8 +37,7 @@ private:
   using handler_type_ = std::function<void(std::cv_status)>;
   using predicate_type_ = std::function<bool()>;
   using work_guard_type_ = boost::asio::executor_work_guard<executor_type>;
-  using value_type_ = std::tuple<
-    handler_type_, predicate_type_, std::shared_ptr<void>, work_guard_type_, bool>;
+  using value_type_ = std::tuple<handler_type_, predicate_type_, std::shared_ptr<void>, work_guard_type_, bool>;
   using handler_list_type_ = std::list<value_type_>;
   using iterator_type_ = typename handler_list_type_::iterator;
   using lists_type_ = std::tuple<handler_list_type_, handler_list_type_>;
@@ -55,11 +54,11 @@ public:
 
   template<typename ExecutionContext>
   explicit basic_condition_variable(
-    ExecutionContext &ctx,
+    ExecutionContext &context,
     corio::enable_if_execution_context_t<ExecutionContext> * = nullptr,
     corio::disable_if_executor_t<ExecutionContext> * = nullptr,
     corio::enable_if_constructible_t<executor_type, typename ExecutionContext::executor_type> * = nullptr)
-    : executor_(ctx.get_executor()),
+    : executor_(context.get_executor()),
       p_lists_(std::make_shared<lists_type_>())
   {}
 
@@ -151,7 +150,7 @@ public:
     async_result_type async_result(completion_handler);
     auto &[handler_queue, disposal_list] = *p_lists_;
     handler_queue.emplace_back(
-      [h = std::move(completion_handler)]([[maybe_unused]] std::cv_status status) mutable -> void{
+      [h = std::move(completion_handler)](std::cv_status status) mutable -> void{
         std::move(h)(status);
       }, []() -> bool{ return true; }, nullptr, work_guard_type_(executor_), false);
     iterator_type_ iter = handler_queue.end();
@@ -161,24 +160,22 @@ public:
     using timer_type = boost::asio::basic_waitable_timer<clock_type>;
     auto p_timer = std::make_shared<timer_type>(executor_, abs_time);
     p_timer->async_wait(
-      [executor = executor_, p_lists = std::weak_ptr<lists_type_>(p_lists_), iter](
-        [[maybe_unused]] boost::system::error_code const &ec) mutable -> void{
-        if (auto p = p_lists.lock()) {
-          auto &[handler_queue, disposal_list] = *p;
-          auto &[handler, predicate, p_timer, work_guard, flag] = *iter;
-          if (flag) {
-            // The handler has been already invoked, and `iter` refers to an
-            // element of `disposal_list`.
-            CORIO_ASSERT(ec.value() == boost::system::errc::operation_canceled);
-            disposal_list.erase(iter);
-          }
-          else {
-            // The handler has not been invoked yet and is canceled, and `iter`
-            // refers to an element of `handler_queue`.
-            CORIO_ASSERT(!ec);
-            boost::asio::post(std::move(executor), std::bind(std::move(handler), std::cv_status::timeout));
-            handler_queue.erase(iter);
-          }
+      [executor = executor_, p_lists = p_lists_, iter]
+      ([[maybe_unused]] boost::system::error_code const &ec) mutable -> void{
+        auto &[handler_queue, disposal_list] = *p_lists;
+        auto &[handler, predicate, p_timer, work_guard, flag] = *iter;
+        if (flag) {
+          // The handler has been already invoked, and `iter` refers to an
+          // element of `disposal_list`.
+          CORIO_ASSERT(ec.value() == boost::system::errc::operation_canceled);
+          disposal_list.erase(iter);
+        }
+        else {
+          // The handler has not been invoked yet and is canceled, and `iter`
+          // refers to an element of `handler_queue`.
+          CORIO_ASSERT(!ec);
+          boost::asio::post(std::move(executor), std::bind(std::move(handler), std::cv_status::timeout));
+          handler_queue.erase(iter);
         }
       });
     std::get<2u>(*iter) = std::move(p_timer);
@@ -209,26 +206,24 @@ public:
     using timer_type = boost::asio::basic_waitable_timer<clock_type>;
     auto p_timer = std::make_shared<timer_type>(executor_, abs_time);
     p_timer->async_wait(
-      [executor = executor_, p_lists = std::weak_ptr<lists_type_>(p_lists_), iter](
-        [[maybe_unused]] boost::system::error_code const &ec) mutable -> void{
-          if (auto p = p_lists.lock()) {
-            auto &[handler_queue, disposal_list] = *p;
-            auto &[handler, predicate, p_timer, work_guard, flag] = *iter;
-            if (flag) {
-              // The handler has been already invoked, and `iter` refers to an
-              // element of `disposal_list`.
-              CORIO_ASSERT(ec.value() == boost::system::errc::operation_canceled);
-              disposal_list.erase(iter);
-            }
-            else {
-              // The handler has not been invoked yet and is canceled, and `iter`
-              // refers to an element of `handler_queue`.
-              CORIO_ASSERT(!ec);
-              boost::asio::post(std::move(executor), std::bind(std::move(handler), std::cv_status::timeout));
-              handler_queue.erase(iter);
-            }
-          }
-        });
+      [executor = executor_, p_lists = p_lists_, iter]
+      ([[maybe_unused]] boost::system::error_code const &ec) mutable -> void{
+        auto &[handler_queue, disposal_list] = *p_lists;
+        auto &[handler, predicate, p_timer, work_guard, flag] = *iter;
+        if (flag) {
+          // The handler has been already invoked, and `iter` refers to an
+          // element of `disposal_list`.
+          CORIO_ASSERT(ec.value() == boost::system::errc::operation_canceled);
+          disposal_list.erase(iter);
+        }
+        else {
+          // The handler has not been invoked yet and is canceled, and `iter`
+          // refers to an element of `handler_queue`.
+          CORIO_ASSERT(!ec);
+          boost::asio::post(std::move(executor), std::bind(std::move(handler), std::cv_status::timeout));
+          handler_queue.erase(iter);
+        }
+      });
     std::get<2u>(*iter) = std::move(p_timer);
     return async_result.get();
   }
@@ -243,8 +238,7 @@ public:
   auto async_wait_for(std::chrono::duration<Rep, Period> const &rel_time,
                       Predicate predicate, CompletionToken &&token)
   {
-    return async_wait_until(std::chrono::steady_clock::now() + rel_time,
-                            std::move(predicate), std::move(token));
+    return async_wait_until(std::chrono::steady_clock::now() + rel_time, std::move(predicate), std::move(token));
   }
 
 private:

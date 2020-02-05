@@ -115,8 +115,8 @@ public:
   explicit coroutine_handle_(std::shared_ptr<coroutine_handle_impl_> const &p) noexcept
     : p_(p)
   {
-    CORIO_ASSERT(p != nullptr);
     CORIO_ASSERT(!corio::is_empty(p));
+    CORIO_ASSERT(p != nullptr);
   }
 
   void resume()
@@ -134,19 +134,23 @@ public:
   void destroy() noexcept
   {
     CORIO_ASSERT(!corio::is_empty(p_));
-    std::shared_ptr<coroutine_handle_impl_> p = p_.lock();
-    CORIO_ASSERT(p.get() != nullptr);
-    p->destroy();
-    p.reset();
+    {
+      std::shared_ptr<coroutine_handle_impl_> p = p_.lock();
+      CORIO_ASSERT(p.get() != nullptr);
+      p->destroy();
+    }
+    p_.reset();
   }
 
   void notify_flow_off() noexcept
   {
     CORIO_ASSERT(!corio::is_empty(p_));
-    std::shared_ptr<coroutine_handle_impl_> p = p_.lock();
-    CORIO_ASSERT(p.get() != nullptr);
-    p->notify_flow_off();
-    p.reset();
+    {
+      std::shared_ptr<coroutine_handle_impl_> p = p_.lock();
+      CORIO_ASSERT(p.get() != nullptr);
+      p->notify_flow_off();
+    }
+    p_.reset();
   }
 
   bool valid() const noexcept

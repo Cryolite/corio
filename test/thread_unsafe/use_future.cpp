@@ -1,6 +1,5 @@
 #include <corio/thread_unsafe/coroutine.hpp>
 
-#include <corio/thread_unsafe/post.hpp>
 #include <gtest/gtest.h>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/post.hpp>

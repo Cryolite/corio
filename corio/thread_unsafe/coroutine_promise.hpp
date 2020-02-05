@@ -8,6 +8,7 @@
 #include <corio/thread_unsafe/promise.hpp>
 #include <corio/core/use_future.hpp>
 #include <corio/core/this_executor.hpp>
+#include <corio/core/is_executor_aware.hpp>
 #include <corio/core/is_executor.hpp>
 #include <corio/core/error.hpp>
 #include <corio/util/exception_guard.hpp>
@@ -30,18 +31,6 @@ class coroutine_promise;
 
 namespace detail_{
 
-template<typename T>
-inline constexpr bool can_have_executor(void const *) noexcept
-{
-  return false;
-}
-
-template<typename T>
-inline constexpr decltype(std::declval<T>().has_executor(), false) can_have_executor(int) noexcept
-{
-  return true;
-}
-
 template<typename Derived>
 class coroutine_promise_return_mixin_;
 
@@ -55,7 +44,12 @@ public:
   template<typename T>
   void return_value(T &&value)
   {
-    static_cast<derived_type_ *>(this)->promise_->set_value(std::forward<T>(value));
+    derived_type_ &self = *static_cast<derived_type_ *>(this);
+    CORIO_ASSERT(self.handle_.valid());
+    CORIO_ASSERT(!self.handle_.destroyed());
+    CORIO_ASSERT(!self.handle_.done());
+    CORIO_ASSERT(self.promise_.has_value());
+    self.promise_->set_value(std::forward<T>(value));
   }
 }; // class coroutine_promise_return_mixin_<corio::thread_unsafe::coroutine_promise<R, Executor> >
 
@@ -68,7 +62,12 @@ private:
 public:
   void return_void()
   {
-    static_cast<derived_type_ *>(this)->promise_->set_value();
+    derived_type_ &self = *static_cast<derived_type_ *>(this);
+    CORIO_ASSERT(self.handle_.valid());
+    CORIO_ASSERT(!self.handle_.destroyed());
+    CORIO_ASSERT(!self.handle_.done());
+    CORIO_ASSERT(self.promise_.has_value());
+    self.promise_->set_value();
   }
 }; // class coroutine_promise_return_mixin_<corio::thread_unsafe::coroutine_promise<void, Executor> >
 
@@ -230,7 +229,7 @@ public:
     CORIO_ASSERT(!handle_.done());
     CORIO_ASSERT(promise_.has_value());
     using type = std::decay_t<T>;
-    if constexpr (detail_::can_have_executor<type>(0)) {
+    if constexpr (corio::is_executor_aware_v<type>) {
       if (BOOST_UNLIKELY(get_executor() != awaitable.get_executor())) /*[[unlikely]]*/ {
         CORIO_THROW<corio::bad_executor_error>();
       }
